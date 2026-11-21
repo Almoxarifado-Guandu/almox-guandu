@@ -167,7 +167,7 @@ let AUTH_READY=false, SESSION=null, PROFILE=null;
 
 const COL_PK = {
   obras:"codigo", fornecedores:"codigo", materiais:"codigo", estoque:"id", lotes:"id",
-  requisicoes:"numero", pedidos:"numero", movimentacoes:"id", agendamentos:"id",
+  requisicoes:"numero", pedidos:"numero", movimentacoes:"id", agendamentos:"id", programacao:"id",
 };
 function toSnakeKey(k){ return k.replace(/([A-Z])/g,(m,c)=>"_"+c.toLowerCase()); }
 function toCamelKey(k){ return k.replace(/_([a-z0-9])/g,(m,c)=>c.toUpperCase()); }
@@ -347,8 +347,8 @@ const UNIDADES = ["UN","M","M²","M³","KG","TON","L","PAR","SC","BR","RL"];
    STATE  (local mirror of the shared database)
    ============================================================ */
 const STATE = {
-  obras:[], fornecedores:[], materiais:[], estoque:[], requisicoes:[], movimentacoes:[], pedidos:[], agendamentos:[], lotes:[],
-  loaded:{obras:false,fornecedores:false,materiais:false,estoque:false,requisicoes:false,movimentacoes:false,pedidos:false,agendamentos:false,lotes:false},
+  obras:[], fornecedores:[], materiais:[], estoque:[], requisicoes:[], movimentacoes:[], pedidos:[], agendamentos:[], lotes:[], programacao:[],
+  loaded:{obras:false,fornecedores:false,materiais:false,estoque:false,requisicoes:false,movimentacoes:false,pedidos:false,agendamentos:false,lotes:false,programacao:false},
 };
 const VFILTER = { obra:"1306" }; // vigente obra filter used across app — abre em 1306 por padrão; "todas" fica disponível na aba "Ambas"
 let ROUTE = {tab:"painel", sub:null};
@@ -392,6 +392,7 @@ async function startSubscriptions(){
   subscribe("pedidos","pedidos");
   subscribe("agendamentos","agendamentos");
   subscribe("lotes","lotes");
+  subscribe("programacao","programacao");
   setTimeout(()=>{ // failsafe: stop showing skeleton after 10s even if a collection is empty/unavailable
     Object.keys(STATE.loaded).forEach(k=>{ if(!STATE.loaded[k]) STATE.loaded[k]=true; });
     render();
@@ -1339,8 +1340,28 @@ function wireCriticosOperacional(){
    ============================================================ */
 function viewRetiradaKiosk(){
   const pendencias = STATE.requisicoes.filter(r=>["aberta","aguardando_entrega","parcial"].includes(r.status)).sort((a,b)=>a.previsao.localeCompare(b.previsao));
+  const hoje = todayISO();
+  const atividades = (STATE.programacao||[]).filter(p=>p.data<=hoje && !p.concluido).sort((a,b)=>a.data.localeCompare(b.data));
   return `
   <div class="fade-in" style="display:flex;flex-direction:column;gap:14px">
+    ${atividades.length? `
+    <div class="card" style="padding:0;overflow:hidden;border-left:4px solid var(--accent)">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border)"><h3 style="margin:0;font-size:13px;font-weight:700">⚡ Programado para hoje</h3></div>
+      <div style="display:flex;flex-direction:column">
+        ${atividades.map(p=>`
+          <div style="padding:10px 16px;border-bottom:1px solid var(--border);font-size:12.5px;display:flex;align-items:center;gap:10px">
+            <div style="flex:1">
+              <div><b class="mono">${p.obra}</b> ${p.data<hoje?'<span class="pill" style="color:var(--bad);background:var(--bad-soft);border:none">Atrasado — '+fmtDateBR(p.data)+'</span>':''}</div>
+              <div class="mono" style="font-weight:600">${esc(p.material)} — ${esc(materialByCode(p.material).nome)} · ${fmtNum(p.quantidadePrevista||0)} ${esc(materialByCode(p.material).unidade||'')}</div>
+              <div style="color:var(--text-faint)">${esc(p.responsavel||'')}${p.observacao?' · '+esc(p.observacao):''}</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px">
+              <button class="btn btn-primary btn-sm" data-usar-programacao="${p._id}">Retirar agora</button>
+              <button class="btn btn-ghost btn-sm" data-concluir-programacao="${p._id}">✓ Concluir</button>
+            </div>
+          </div>`).join("")}
+      </div>
+    </div>`:""}
     <div class="card" style="padding:18px">
       <h2 class="display" style="margin:0 0 12px;font-size:16px;color:var(--accent)">Registrar Retirada / Movimentação</h2>
       <form id="form-retirada-kiosk" style="display:flex;flex-direction:column;gap:12px">
@@ -1355,6 +1376,7 @@ function viewRetiradaKiosk(){
         <div><label class="field-label">Quantidade</label><input type="number" min="0.01" step="0.01" name="quantidade" required placeholder="0"></div>
         <div><label class="field-label">Lote / etiqueta (opcional)</label><input name="lote"></div>
         <div><label class="field-label">Aplicação / Onde foi usado</label><input name="aplicacao" placeholder="Ex: Filtro 3 — ETA"></div>
+        <input type="hidden" name="programacaoId">
         <button type="submit" class="btn btn-primary" style="justify-content:center;padding:12px">Confirmar</button>
       </form>
     </div>
@@ -1377,12 +1399,30 @@ function wireRetiradaKiosk(){
   if(f) f.onsubmit = async(e)=>{
     e.preventDefault();
     const fd = new FormData(f);
+    const progId = fd.get('programacaoId');
     const ok = await registrarMovimentacao({
       obra: fd.get('obra'), material: fd.get('material'), tipo: fd.get('tipo'), quantidade: fd.get('quantidade'),
       lote: fd.get('lote'), aplicacao: fd.get('aplicacao'), responsavel: PROFILE.nome||"Campo", origemOverride:"campo",
     });
-    if(ok) f.reset();
+    if(ok){
+      f.reset();
+      if(progId) await dbMerge("programacao", progId, {concluido:true, concluidoEm:new Date().toISOString()});
+    }
   };
+  document.querySelectorAll('[data-usar-programacao]').forEach(el=>el.onclick=()=>{
+    const p = (STATE.programacao||[]).find(x=>x._id===el.dataset.usarProgramacao); if(!p) return;
+    f.querySelector('[name="obra"]').value = p.obra;
+    f.querySelector('[name="tipo"]').value = "saida";
+    f.querySelector('[name="material"]').value = p.material;
+    f.querySelector('[name="quantidade"]').value = p.quantidadePrevista||"";
+    f.querySelector('[name="aplicacao"]').value = p.observacao||"";
+    f.querySelector('[name="programacaoId"]').value = p._id;
+    f.scrollIntoView({behavior:"smooth", block:"start"});
+    toast("Formulário preenchido — confira e confirme.","info");
+  });
+  document.querySelectorAll('[data-concluir-programacao]').forEach(el=>el.onclick=async()=>{
+    await dbMerge("programacao", el.dataset.concluirProgramacao, {concluido:true, concluidoEm:new Date().toISOString()});
+  });
 }
 
 /* ============================================================
@@ -1524,6 +1564,7 @@ function viewMovimentacoes(){
       <h2 class="display" style="margin:0;font-size:16px">Movimentações &amp; Inventário</h2>
       <button class="btn btn-primary btn-sm" data-action="nova-mov">+ Registrar Movimentação</button>
     </div>
+    ${programacaoAdminHTML()}
     <div class="card" style="padding:0">
       <div class="scrollx">
       <table><thead><tr><th>Data</th><th>Obra</th><th>Tipo</th><th>Material</th><th>Nome</th><th>Qtd</th><th>Lote</th><th>Lote(s) Consumido(s)</th><th>Aplicação</th><th>Responsável</th><th>Origem</th></tr></thead>
@@ -1540,8 +1581,69 @@ function viewMovimentacoes(){
     </div>
   </div>`;
 }
+function programacaoAdminHTML(){
+  const hoje = todayISO();
+  const itens = (STATE.programacao||[]).filter(p=>p.data>=hoje).sort((a,b)=> (a.data+String(a.concluido?1:0)).localeCompare(b.data+String(b.concluido?1:0)));
+  return `
+  <div class="card" style="padding:0;overflow:hidden">
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+      <div>
+        <h3 style="margin:0;font-size:13px;font-weight:700">Programação do Dia — o que o campo deve retirar</h3>
+        <div style="font-size:11.5px;color:var(--text-faint)">Aparece como lembrete na tela de retirada do campo.</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-action="nova-programacao">+ Nova Atividade</button>
+    </div>
+    ${itens.length? `<div style="display:flex;flex-direction:column">
+      ${itens.map(p=>`
+        <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;font-size:12.5px;${p.concluido?'opacity:.55':''}">
+          <div style="flex:1">
+            <div><b class="mono">${p.obra}</b> · ${fmtDateBR(p.data)}${p.data===hoje?' <span class="pill" style="color:var(--accent);background:var(--accent-soft);border:none">Hoje</span>':''} ${p.concluido?'<span class="pill" style="color:var(--good);background:var(--good-soft);border:none">Concluído</span>':''}</div>
+            <div class="mono">${esc(p.material)} — ${esc(materialByCode(p.material).nome)} · ${fmtNum(p.quantidadePrevista||0)} ${esc(materialByCode(p.material).unidade||'')}</div>
+            <div style="color:var(--text-faint)">${esc(p.responsavel||'')}${p.observacao?' · '+esc(p.observacao):''}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" data-del-programacao="${p._id}" title="Excluir">✕</button>
+        </div>`).join("")}
+    </div>` : `<div style="padding:16px;font-size:12.5px;color:var(--text-faint)">Nada programado. Clique em "+ Nova Atividade" para avisar o campo do que precisa ser retirado.</div>`}
+  </div>`;
+}
+function wireProgramacaoAdmin(){
+  const b=document.querySelector('[data-action="nova-programacao"]'); if(b) b.onclick=()=>openModalProgramacao();
+  document.querySelectorAll('[data-del-programacao]').forEach(el=>el.onclick=async()=>{
+    if(confirm("Excluir esta atividade programada?")) await dbDelete("programacao", el.dataset.delProgramacao);
+  });
+}
+function openModalProgramacao(){
+  openModal(`
+    ${modalHeader("Nova Atividade Programada")}
+    <form id="form-programacao" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label class="field-label">Obra</label><select name="obra">${obrasAtivas().map(o=>`<option value="${o.codigo}">${o.codigo} — ${esc(o.nome)}</option>`).join("")}</select></div>
+      <div><label class="field-label">Data</label><input type="date" name="data" value="${todayISO()}" required></div>
+      <div style="grid-column:span 2"><label class="field-label">Material</label>
+        <select name="material" required><option value="">Selecione…</option>${STATE.materiais.map(m=>`<option value="${m.codigo}">${m.codigo} — ${esc(m.nome)}</option>`).join("")}</select>
+      </div>
+      <div><label class="field-label">Quantidade prevista</label><input type="number" min="0.01" step="0.01" name="quantidadePrevista" required></div>
+      <div><label class="field-label">Responsável / Equipe</label><input name="responsavel" placeholder="Ex: Equipe Munck"></div>
+      <div style="grid-column:span 2"><label class="field-label">Observação (opcional)</label><input name="observacao" placeholder="Ex: Carregar antes das 10h"></div>
+      <div style="grid-column:span 2;display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button><button type="submit" class="btn btn-primary">Criar Atividade</button></div>
+    </form>
+  `);
+  wireModalClose();
+  document.getElementById('form-programacao').onsubmit = async(e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const id = uid("prg");
+    const ok = await dbSet("programacao", id, {
+      obra: fd.get('obra'), data: fd.get('data'), material: fd.get('material'),
+      quantidadePrevista: Number(fd.get('quantidadePrevista'))||0,
+      responsavel: fd.get('responsavel')||"", observacao: fd.get('observacao')||"",
+      concluido:false,
+    });
+    if(ok){ toast("Atividade programada criada.","success"); closeModal(); }
+  };
+}
 function wireMovimentacoes(){
   const b=document.querySelector('[data-action="nova-mov"]'); if(b) b.onclick=()=>openModalMovimentacao();
+  wireProgramacaoAdmin();
 }
 
 /* ============================================================
