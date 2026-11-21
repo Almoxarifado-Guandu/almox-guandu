@@ -1621,7 +1621,10 @@ function programacaoAdminHTML(){
             <div class="mono">${esc(p.material)} — ${esc(materialByCode(p.material).nome)} · ${fmtNum(p.quantidadePrevista||0)} ${esc(materialByCode(p.material).unidade||'')}</div>
             <div style="color:var(--text-faint)">${esc(p.responsavel||'')}${p.observacao?' · '+esc(p.observacao):''}</div>
           </div>
-          <button class="btn btn-ghost btn-sm" data-del-programacao="${p._id}" title="Excluir">✕</button>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-ghost btn-sm" data-edit-programacao="${p._id}" title="Editar">✎</button>
+            <button class="btn btn-ghost btn-sm" data-del-programacao="${p._id}" title="Excluir / Cancelar">✕</button>
+          </div>
         </div>`).join("")}
     </div>` : `<div style="padding:16px;font-size:12.5px;color:var(--text-faint)">Nada programado. Clique em "+ Nova Atividade" para avisar o campo do que precisa ser retirado.</div>`}
   </div>`;
@@ -1629,36 +1632,40 @@ function programacaoAdminHTML(){
 function wireProgramacaoAdmin(){
   const b=document.querySelector('[data-action="nova-programacao"]'); if(b) b.onclick=()=>openModalProgramacao();
   document.querySelectorAll('[data-del-programacao]').forEach(el=>el.onclick=async()=>{
-    if(confirm("Excluir esta atividade programada?")) await dbDelete("programacao", el.dataset.delProgramacao);
+    if(confirm("Excluir/cancelar esta atividade programada? O campo não vai mais ver esse aviso.")) await dbDelete("programacao", el.dataset.delProgramacao);
+  });
+  document.querySelectorAll('[data-edit-programacao]').forEach(el=>el.onclick=()=>{
+    const p = (STATE.programacao||[]).find(x=>x._id===el.dataset.editProgramacao); if(p) openModalProgramacao(p);
   });
 }
-function openModalProgramacao(){
+function openModalProgramacao(existing){
   openModal(`
-    ${modalHeader("Nova Atividade Programada")}
+    ${modalHeader(existing? "Editar Atividade Programada" : "Nova Atividade Programada")}
     <form id="form-programacao" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div><label class="field-label">Obra</label><select name="obra">${obrasAtivas().map(o=>`<option value="${o.codigo}">${o.codigo} — ${esc(o.nome)}</option>`).join("")}</select></div>
-      <div><label class="field-label">Data</label><input type="date" name="data" value="${todayISO()}" required></div>
+      <div><label class="field-label">Obra</label><select name="obra">${obrasAtivas().map(o=>`<option value="${o.codigo}" ${existing&&existing.obra===o.codigo?'selected':''}>${o.codigo} — ${esc(o.nome)}</option>`).join("")}</select></div>
+      <div><label class="field-label">Data</label><input type="date" name="data" value="${existing?existing.data:todayISO()}" required></div>
       <div style="grid-column:span 2"><label class="field-label">Material</label>
-        <select name="material" required><option value="">Selecione…</option>${STATE.materiais.map(m=>`<option value="${m.codigo}">${m.codigo} — ${esc(m.nome)}</option>`).join("")}</select>
+        <select name="material" required><option value="">Selecione…</option>${STATE.materiais.map(m=>`<option value="${m.codigo}" ${existing&&existing.material===m.codigo?'selected':''}>${m.codigo} — ${esc(m.nome)}</option>`).join("")}</select>
       </div>
-      <div><label class="field-label">Quantidade prevista</label><input type="number" min="0.01" step="0.01" name="quantidadePrevista" required></div>
-      <div><label class="field-label">Responsável / Equipe</label><input name="responsavel" placeholder="Ex: Equipe Munck"></div>
-      <div style="grid-column:span 2"><label class="field-label">Observação (opcional)</label><input name="observacao" placeholder="Ex: Carregar antes das 10h"></div>
-      <div style="grid-column:span 2;display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button><button type="submit" class="btn btn-primary">Criar Atividade</button></div>
+      <div><label class="field-label">Quantidade prevista</label><input type="number" min="0.01" step="0.01" name="quantidadePrevista" value="${existing?existing.quantidadePrevista:''}" required></div>
+      <div><label class="field-label">Responsável / Equipe</label><input name="responsavel" value="${existing?esc(existing.responsavel||''):''}" placeholder="Ex: Equipe Munck"></div>
+      <div style="grid-column:span 2"><label class="field-label">Observação (opcional)</label><input name="observacao" value="${existing?esc(existing.observacao||''):''}" placeholder="Ex: Carregar antes das 10h"></div>
+      ${existing? `<div style="grid-column:span 2"><label style="display:flex;align-items:center;gap:6px;font-size:12.5px"><input type="checkbox" name="concluido" ${existing.concluido?'checked':''} style="width:auto"> Marcar como concluída</label></div>` : ""}
+      <div style="grid-column:span 2;display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button><button type="submit" class="btn btn-primary">${existing?'Salvar Alterações':'Criar Atividade'}</button></div>
     </form>
   `);
   wireModalClose();
   document.getElementById('form-programacao').onsubmit = async(e)=>{
     e.preventDefault();
     const fd = new FormData(e.target);
-    const id = uid("prg");
+    const id = existing? existing._id : uid("prg");
     const ok = await dbSet("programacao", id, {
       obra: fd.get('obra'), data: fd.get('data'), material: fd.get('material'),
       quantidadePrevista: Number(fd.get('quantidadePrevista'))||0,
       responsavel: fd.get('responsavel')||"", observacao: fd.get('observacao')||"",
-      concluido:false,
+      concluido: existing? fd.get('concluido')==="on" : false,
     });
-    if(ok){ toast("Atividade programada criada.","success"); closeModal(); }
+    if(ok){ toast(existing?"Atividade atualizada.":"Atividade programada criada.","success"); closeModal(); }
   };
 }
 function wireMovimentacoes(){
