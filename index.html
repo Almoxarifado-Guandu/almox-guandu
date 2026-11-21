@@ -350,7 +350,7 @@ const STATE = {
   obras:[], fornecedores:[], materiais:[], estoque:[], requisicoes:[], movimentacoes:[], pedidos:[], agendamentos:[], lotes:[],
   loaded:{obras:false,fornecedores:false,materiais:false,estoque:false,requisicoes:false,movimentacoes:false,pedidos:false,agendamentos:false,lotes:false},
 };
-const VFILTER = { obra:"todas" }; // vigente obra filter used across app
+const VFILTER = { obra:"1306" }; // vigente obra filter used across app — abre em 1306 por padrão; "todas" fica disponível na aba "Ambas"
 let ROUTE = {tab:"painel", sub:null};
 let UNSUBS = [];
 
@@ -721,7 +721,7 @@ const REPORTS = [
   {group:"criticos", id:"crit_seguranca", title:"Estoque de segurança", rows:(f)=>criticosRows(f)},
   {group:"criticos", id:"crit_consumo_medio", title:"Consumo médio", rows:(f)=>criticosRows(f)},
   {group:"criticos", id:"crit_situacao", title:"Materiais em situação crítica", rows:(f)=>criticosRows(f).filter(r=>r["Situação"]!=="Controlado")},
-  {group:"criticos", id:"crit_ruptura", title:"Materiais com risco de ruptura", rows:(f)=>criticosRows(f).filter(r=>r["Situação"]==="Ruptura Total (IM Urgente)"||r["Cobertura (d)"]!=="—"&&r["Cobertura (d)"]<=5)},
+  {group:"criticos", id:"crit_ruptura", title:"Materiais com risco de ficar sem estoque", rows:(f)=>criticosRows(f).filter(r=>r["Situação"]==="Estoque Zerado (Urgente)"||r["Cobertura (d)"]!=="—"&&r["Cobertura (d)"]<=5)},
   {group:"criticos", id:"crit_necessidade", title:"Necessidade estimada de reposição", rows:(f)=>criticosRows(f).filter(r=>r["Reposição Sug."]>0)},
   {group:"criticos", id:"crit_previsao_esgotamento", title:"Previsão de esgotamento", rows:(f)=>criticosRows(f)},
   {group:"criticos", id:"crit_historico_consumo", title:"Histórico de consumo dos críticos", chart:"consumo_criticos"},
@@ -773,7 +773,7 @@ function criticosRows(f){
     const consumoDia = consumoMedioMes/30;
     const cobertura = consumoDia>0 ? Math.round((e.saldoAtual||0)/consumoDia) : "—";
     let situacao = "Controlado";
-    if((e.saldoAtual||0)<=0) situacao="Ruptura Total (IM Urgente)";
+    if((e.saldoAtual||0)<=0) situacao="Estoque Zerado (Urgente)";
     else if((e.saldoAtual||0)<(e.minimo||0)) situacao="Abaixo do Mínimo (Alerta IM)";
     else if((e.saldoAtual||0)<(e.seguranca||0)) situacao="Em Estoque de Segurança";
     const reposicaoSug = situacao!=="Controlado" ? Math.max((e.seguranca||0)-(e.saldoAtual||0), (e.minimo||0)) : 0;
@@ -1222,7 +1222,7 @@ function wirePainel(){
   }
   // Criticos pizza
   const crit = criticosRows({mat:()=>true});
-  const counts = {Controlado:0,"Em Estoque de Segurança":0,"Abaixo do Mínimo (Alerta IM)":0,"Ruptura Total (IM Urgente)":0};
+  const counts = {Controlado:0,"Em Estoque de Segurança":0,"Abaixo do Mínimo (Alerta IM)":0,"Estoque Zerado (Urgente)":0};
   crit.forEach(r=> counts[r["Situação"]] = (counts[r["Situação"]]||0)+1);
   const ctx2 = document.getElementById('chart-criticos-pizza');
   if(ctx2){
@@ -1301,7 +1301,7 @@ function viewCriticosOperacional(){
   </div>`;
 }
 function situacaoCellRenderer(v){
-  const map = {"Controlado":"good","Em Estoque de Segurança":"warn","Abaixo do Mínimo (Alerta IM)":"warn","Ruptura Total (IM Urgente)":"bad"};
+  const map = {"Controlado":"good","Em Estoque de Segurança":"warn","Abaixo do Mínimo (Alerta IM)":"warn","Estoque Zerado (Urgente)":"bad"};
   return pill(v, map[v]||"info");
 }
 function wireCriticosOperacional(){
@@ -1942,7 +1942,7 @@ function openModal(html){
 }
 function closeModal(){ document.getElementById('modal-root').innerHTML=""; }
 function modalHeader(title){ return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><h3 class="display" style="margin:0;font-size:15px">${esc(title)}</h3><button class="btn btn-ghost btn-sm" data-close-modal>✕</button></div>`; }
-function wireModalClose(){ const b=document.querySelector('[data-close-modal]'); if(b) b.onclick=closeModal; }
+function wireModalClose(){ document.querySelectorAll('[data-close-modal]').forEach(b=>b.onclick=closeModal); }
 
 function openModalMovimentacao(){
   openModal(`
