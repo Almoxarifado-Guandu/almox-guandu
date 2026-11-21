@@ -9,10 +9,10 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <style>
   :root{
     /* Paleta "painel de estação de tratamento": tinta de prancheta, teal água/filtração,
@@ -1202,7 +1202,12 @@ function openModalResumoDia(){
 
 function wirePainel(){
   destroyCharts();
-  if(typeof Chart==="undefined") return;
+  // Liga os botões primeiro, independente dos gráficos — assim, mesmo se o Chart.js
+  // não carregar (ex: CDN bloqueado pela rede), os botões continuam funcionando.
+  document.querySelectorAll('[data-export]').forEach(el=>el.onclick=()=>exportPainel(el.dataset.export));
+  const btnResumo = document.querySelector('[data-action="resumo-dia"]'); if(btnResumo) btnResumo.onclick = openModalResumoDia;
+  if(typeof Chart==="undefined"){ console.warn("Chart.js não carregou — gráficos indisponíveis, mas o resto do painel funciona normalmente."); return; }
+  try{
   const palette = getComputedStyle(document.documentElement);
   const c = v=>palette.getPropertyValue(v).trim();
 
@@ -1246,8 +1251,7 @@ function wirePainel(){
     chartRefs.fornlead = new Chart(ctx4, {type:'bar', data:{labels:cf.map(x=>x.Fornecedor), datasets:[{label:'Lead time (d)',data:cf.map(x=>x["Lead Time Médio (d)"]),backgroundColor:c('--info')},{label:'Índice atraso (%)',data:cf.map(x=>x["Índice Atraso (%)"]),backgroundColor:c('--bad')}]},
       options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:c('--text-dim'),boxWidth:10,font:{size:10}}}},scales:{x:{ticks:{color:c('--text-dim'),font:{size:9}},grid:{display:false}},y:{ticks:{color:c('--text-dim')},grid:{color:c('--border')}}}}});
   }
-  document.querySelectorAll('[data-export]').forEach(el=>el.onclick=()=>exportPainel(el.dataset.export));
-  const btnResumo = document.querySelector('[data-action="resumo-dia"]'); if(btnResumo) btnResumo.onclick = openModalResumoDia;
+  }catch(e){ console.error("Falha ao desenhar gráficos do painel",e); }
 }
 function exportPainel(kind){
   const est = estoqueVisivel();
@@ -1406,7 +1410,13 @@ function wireRetiradaKiosk(){
     });
     if(ok){
       f.reset();
-      if(progId) await dbMerge("programacao", progId, {concluido:true, concluidoEm:new Date().toISOString()});
+      if(progId){
+        const okProg = await dbMerge("programacao", progId, {concluido:true, concluidoEm:new Date().toISOString()});
+        if(okProg){
+          const idx = (STATE.programacao||[]).findIndex(p=>p._id===progId);
+          if(idx>-1){ STATE.programacao[idx] = {...STATE.programacao[idx], concluido:true}; render(); }
+        }
+      }
     }
   };
   document.querySelectorAll('[data-usar-programacao]').forEach(el=>el.onclick=()=>{
@@ -1421,7 +1431,17 @@ function wireRetiradaKiosk(){
     toast("Formulário preenchido — confira e confirme.","info");
   });
   document.querySelectorAll('[data-concluir-programacao]').forEach(el=>el.onclick=async()=>{
-    await dbMerge("programacao", el.dataset.concluirProgramacao, {concluido:true, concluidoEm:new Date().toISOString()});
+    el.disabled = true; el.textContent = "Salvando…";
+    const id = el.dataset.concluirProgramacao;
+    const ok = await dbMerge("programacao", id, {concluido:true, concluidoEm:new Date().toISOString()});
+    if(ok){
+      toast("Atividade marcada como concluída.","success");
+      // Atualização otimista: some da lista já, sem esperar o tempo real do servidor confirmar.
+      const idx = (STATE.programacao||[]).findIndex(p=>p._id===id);
+      if(idx>-1){ STATE.programacao[idx] = {...STATE.programacao[idx], concluido:true}; render(); }
+    } else {
+      el.disabled = false; el.textContent = "✓ Concluir";
+    }
   });
 }
 
