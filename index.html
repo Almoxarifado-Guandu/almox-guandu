@@ -294,7 +294,12 @@ window.addEventListener('unhandledrejection', function(ev){
 
 /* ---------- Utilities ---------- */
 const uid = (p="id")=> p+"-"+Math.random().toString(36).slice(2,9);
-const todayISO = ()=> new Date().toISOString().slice(0,10);
+// Usa o dia/mês/ano LOCAL do dispositivo (não UTC) — importante porque toISOString()
+// converte para UTC e, à noite no horário do Brasil (UTC-3), já "vira" o dia seguinte.
+const todayISO = ()=>{
+  const d = new Date();
+  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+};
 function fmtDateBR(iso){ if(!iso) return "—"; const [y,m,d]=iso.split("-"); return `${d}/${m}/${y}`; }
 function parseISO(iso){ return iso? new Date(iso+"T00:00:00") : null; }
 function daysBetween(a,b){ if(!a||!b) return null; return Math.round((parseISO(b)-parseISO(a))/86400000); }
