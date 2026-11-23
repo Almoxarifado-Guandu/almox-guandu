@@ -349,9 +349,12 @@ const CATEGORIAS = ["Aço & Estrutural","Elétrica & Automação","Hidráulica &
 const UNIDADES = ["UN","M","M²","M³","KG","TON","L","PAR","SC","BR","RL"];
 // Responsáveis fixos do almoxarifado — evita redigitar sempre; o campo continua aceitando qualquer texto digitado.
 const RESPONSAVEIS_ALMOX = ["Jeferson Freitas", "Lucas Marques"];
-function responsavelDatalistHTML(id){
-  return `<datalist id="${id}">${RESPONSAVEIS_ALMOX.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>`;
+// Equipe que normalmente opera o munck/movimentação de carga — campo continua livre para outros nomes ou "Anderson e Tiago" quando os dois estiverem envolvidos.
+const EQUIPE_MOVIMENTACAO = ["Anderson", "Tiago", "Anderson e Tiago"];
+function nomesDatalistHTML(id, nomes){
+  return `<datalist id="${id}">${nomes.map(n=>`<option value="${esc(n)}">`).join("")}</datalist>`;
 }
+function responsavelDatalistHTML(id){ return nomesDatalistHTML(id, RESPONSAVEIS_ALMOX); }
 
 /* ============================================================
    STATE  (local mirror of the shared database)
@@ -1684,7 +1687,7 @@ function openModalProgramacao(existing){
         <select name="material" id="prog-material-select" required><option value="">Selecione…</option>${programacaoMaterialOptionsHTML(rmInicial, existing)}</select>
       </div>
       <div><label class="field-label">Quantidade prevista</label><input type="number" min="0.01" step="0.01" name="quantidadePrevista" id="prog-qtd-input" value="${existing?existing.quantidadePrevista:''}" required></div>
-      <div><label class="field-label">Responsável / Equipe</label><input name="responsavel" value="${existing?esc(existing.responsavel||''):''}" placeholder="Ex: Equipe Munck"></div>
+      <div><label class="field-label">Responsável / Equipe</label><input name="responsavel" value="${existing?esc(existing.responsavel||''):''}" placeholder="Ex: Equipe Munck" list="equipe-lista-prog">${nomesDatalistHTML('equipe-lista-prog', EQUIPE_MOVIMENTACAO)}</div>
       <div style="grid-column:span 2"><label class="field-label">Observação (opcional)</label><input name="observacao" value="${existing?esc(existing.observacao||''):''}" placeholder="Ex: Carregar antes das 10h"></div>
       ${existing? `<div style="grid-column:span 2"><label style="display:flex;align-items:center;gap:6px;font-size:12.5px"><input type="checkbox" name="concluido" ${existing.concluido?'checked':''} style="width:auto"> Marcar como concluída</label></div>` : ""}
       <div style="grid-column:span 2;display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button><button type="submit" class="btn btn-primary">${existing?'Salvar Alterações':'Criar Atividade'}</button></div>
