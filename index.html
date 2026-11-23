@@ -162,7 +162,7 @@ if(!window.supabase){
 }
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-let USERC=null, DOWNLOADSC=null, SAMPLEC=null, ASSETSC=null, CAN_EDIT=true, CAP_READY=false;
+let USERC=null, DOWNLOADSC=null, CAN_EDIT=false, CAP_READY=false;
 let AUTH_READY=false, SESSION=null, PROFILE=null;
 
 const COL_PK = {
@@ -228,7 +228,7 @@ async function carregarPerfil(userId){
   try{
     const { data, error, status, statusText } = await sb.from("profiles").select("*").eq("id",userId).maybeSingle();
     if(error){ PERFIL_ERRO = `[${status||"?"}] ${error.message||statusText||"erro desconhecido"}${error.hint?(" — "+error.hint):""}`; throw error; }
-    if(data){ PROFILE = { nome:data.nome, role:data.role }; return; }
+    if(data){ PROFILE = { nome:data.nome, role:data.role }; CAN_EDIT = ["admin","almoxarifado"].includes(data.role); return; }
     // Sessão "fantasma": o token no navegador aponta pra um usuário que não existe mais
     // em profiles (ex.: conta recriada). Em vez de assumir 'campo' em silêncio, encerra
     // a sessão velha para forçar um login limpo com o usuário atual.
@@ -237,7 +237,7 @@ async function carregarPerfil(userId){
     PROFILE = null;
     try{ await sb.auth.signOut(); }catch(e){}
     SESSION = null;
-  }catch(e){ console.error("perfil falhou",e); if(!PERFIL_ERRO) PERFIL_ERRO = String((e&&e.message)||e); PROFILE = { nome:"", role:"campo" }; }
+  }catch(e){ console.error("perfil falhou",e); if(!PERFIL_ERRO) PERFIL_ERRO = String((e&&e.message)||e); PROFILE = { nome:"", role:"campo" }; CAN_EDIT = false; }
 }
 
 function mostrarErroFatal(msg){
@@ -1006,7 +1006,7 @@ function alertaBannerHTML(){
   <div class="card fade-in" style="background:var(--warn-soft);border-color:var(--warn);padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
     <span style="font-size:18px">⚠️</span>
     <div style="flex:1;min-width:220px">
-      <b style="color:var(--warn)">Alerta de Estoque Mínimo:</b> ${alertas.length} posição(ões) atingiram o estoque mínimo ou estão em ruptura <span class="mono" style="color:var(--text-dim)">(${txt})</span>.
+      <b style="color:var(--warn)">Alerta — Materiais Críticos:</b> ${alertas.length} posição(ões) de materiais marcados como críticos estão em segurança, abaixo do mínimo ou zeradas <span class="mono" style="color:var(--text-dim)">(${txt})</span>.
     </div>
     <button class="btn btn-primary btn-sm" data-action="gerar-rm-urgente">Gerar RM Urgente Pré-Preenchida</button>
   </div>`;
@@ -1088,7 +1088,7 @@ function viewPainel(){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px">
       ${kpiTile("Requisições Ativas", rms.filter(r=>!["atendida","cancelada"].includes(r.status)).length, "info")}
       ${kpiTile("RMs Atrasadas", atrasadasRM, atrasadasRM? "bad":"good")}
-      ${kpiTile("Abaixo do Mínimo", abaixoMin, abaixoMin?"warn":"good")}
+      ${kpiTile("Abaixo do Mínimo (Todos Materiais)", abaixoMin, abaixoMin?"warn":"good")}
       ${kpiTile("Sem Estoque (zerado)", semEstoque, semEstoque?"bad":"good")}
       ${kpiTile("Pedidos Pendentes/Atrasados", pendentesPC, pendentesPC?"warn":"good")}
       ${kpiTile("% Atendidas no Prazo", kpi.pct_prazo+"%", kpi.pct_prazo>=85?"good":"warn")}
@@ -1291,7 +1291,6 @@ function viewCriticosOperacional(){
         <div><label class="field-label">Aplicação</label><input name="aplicacao" placeholder="Ex: Filtro 3 — ETA"></div>
         <div><label class="field-label">Responsável pela retirada</label><input name="responsavel" placeholder="Nome do operador"></div>
         <div style="grid-column:1/-1;display:flex;gap:8px;align-items:center">
-          ${SAMPLEC?`<button type="button" class="btn btn-ghost btn-sm" id="btn-foto-crit">📷 Preencher por Foto</button>`:""}
           <span style="font-size:11px;color:var(--text-dim)">O lote a ser baixado é escolhido automaticamente pelo sistema (FIFO/validade) — não precisa informar.</span>
         </div>
         <div><button type="submit" class="btn btn-primary" style="width:100%;justify-content:center">Confirmar Retirada</button></div>
@@ -1318,25 +1317,21 @@ function wireCriticosOperacional(){
   const f = document.getElementById('form-retirada-rapida');
   if(f) f.onsubmit = async (e)=>{
     e.preventDefault();
-    const fd = new FormData(f);
-    const ok = await registrarMovimentacao({
-      obra: fd.get('obra'), material: fd.get('material'), tipo:'saida', quantidade: fd.get('quantidade'),
-      lote: fd.get('lote'), aplicacao: fd.get('aplicacao'), responsavel: fd.get('responsavel'), origemOverride:"critico-campo",
-      fotoAssetId: f.dataset.fotoAssetId||null,
-    });
-    if(ok){ f.reset(); delete f.dataset.fotoAssetId; }
+    if(f.dataset.enviando==="1") return;
+    const __btn = f.querySelector('[type="submit"]');
+    f.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd = new FormData(f);
+      const ok = await registrarMovimentacao({
+        obra: fd.get('obra'), material: fd.get('material'), tipo:'saida', quantidade: fd.get('quantidade'),
+        lote: fd.get('lote'), aplicacao: fd.get('aplicacao'), responsavel: fd.get('responsavel'), origemOverride:"critico-campo",
+        fotoAssetId: f.dataset.fotoAssetId||null,
+      });
+      if(ok){ f.reset(); delete f.dataset.fotoAssetId; }
+    } finally {
+      f.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
-  const bf = document.getElementById('btn-foto-crit');
-  if(bf) bf.onclick = ()=> abrirCapturaFoto((dados)=>{
-    if(!f) return;
-    if(dados.material) f.querySelector('[name="material"]').value = dados.material;
-    if(dados.quantidade) f.querySelector('[name="quantidade"]').value = dados.quantidade;
-    if(dados.lote) f.querySelector('[name="lote"]').value = dados.lote;
-    if(dados.aplicacao) f.querySelector('[name="aplicacao"]').value = dados.aplicacao;
-    if(dados.responsavel) f.querySelector('[name="responsavel"]').value = dados.responsavel;
-    if(dados._fotoAssetId) f.dataset.fotoAssetId = dados._fotoAssetId;
-    toast("Rascunho preenchido a partir da foto. Confira os campos antes de confirmar.","info");
-  });
   document.querySelectorAll('[data-export]').forEach(el=>el.onclick=()=>{
     const rows = criticosRows({mat:()=>true});
     if(el.dataset.export==="xlsx-crit") exportXLSX(rows,"Materiais_Criticos");
@@ -1407,21 +1402,28 @@ function wireRetiradaKiosk(){
   const f = document.getElementById('form-retirada-kiosk');
   if(f) f.onsubmit = async(e)=>{
     e.preventDefault();
-    const fd = new FormData(f);
-    const progId = fd.get('programacaoId');
-    const ok = await registrarMovimentacao({
-      obra: fd.get('obra'), material: fd.get('material'), tipo: fd.get('tipo'), quantidade: fd.get('quantidade'),
-      lote: fd.get('lote'), aplicacao: fd.get('aplicacao'), responsavel: PROFILE.nome||"Campo", origemOverride:"campo",
-    });
-    if(ok){
-      f.reset();
-      if(progId){
-        const okProg = await dbMerge("programacao", progId, {concluido:true, concluidoEm:new Date().toISOString()});
-        if(okProg){
-          const idx = (STATE.programacao||[]).findIndex(p=>p._id===progId);
-          if(idx>-1){ STATE.programacao[idx] = {...STATE.programacao[idx], concluido:true}; render(); }
+    if(f.dataset.enviando==="1") return;
+    const __btn = f.querySelector('[type="submit"]');
+    f.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd = new FormData(f);
+      const progId = fd.get('programacaoId');
+      const ok = await registrarMovimentacao({
+        obra: fd.get('obra'), material: fd.get('material'), tipo: fd.get('tipo'), quantidade: fd.get('quantidade'),
+        lote: fd.get('lote'), aplicacao: fd.get('aplicacao'), responsavel: PROFILE.nome||"Campo", origemOverride:"campo",
+      });
+      if(ok){
+        f.reset();
+        if(progId){
+          const okProg = await dbMerge("programacao", progId, {concluido:true, concluidoEm:new Date().toISOString()});
+          if(okProg){
+            const idx = (STATE.programacao||[]).findIndex(p=>p._id===progId);
+            if(idx>-1){ STATE.programacao[idx] = {...STATE.programacao[idx], concluido:true}; render(); }
+          }
         }
       }
+    } finally {
+      f.dataset.enviando = ""; if(__btn) __btn.disabled = false;
     }
   };
   document.querySelectorAll('[data-usar-programacao]').forEach(el=>el.onclick=()=>{
@@ -1660,17 +1662,25 @@ function openModalProgramacao(existing){
     </form>
   `);
   wireModalClose();
-  document.getElementById('form-programacao').onsubmit = async(e)=>{
+  const fProg = document.getElementById('form-programacao');
+  fProg.onsubmit = async(e)=>{
     e.preventDefault();
-    const fd = new FormData(e.target);
-    const id = existing? existing._id : uid("prg");
-    const ok = await dbSet("programacao", id, {
-      obra: fd.get('obra'), data: fd.get('data'), material: fd.get('material'),
-      quantidadePrevista: Number(fd.get('quantidadePrevista'))||0,
-      responsavel: fd.get('responsavel')||"", observacao: fd.get('observacao')||"",
-      concluido: existing? fd.get('concluido')==="on" : false,
-    });
-    if(ok){ toast(existing?"Atividade atualizada.":"Atividade programada criada.","success"); closeModal(); }
+    if(fProg.dataset.enviando==="1") return;
+    const __btn = fProg.querySelector('[type="submit"]');
+    fProg.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd = new FormData(e.target);
+      const id = existing? existing._id : uid("prg");
+      const ok = await dbSet("programacao", id, {
+        obra: fd.get('obra'), data: fd.get('data'), material: fd.get('material'),
+        quantidadePrevista: Number(fd.get('quantidadePrevista'))||0,
+        responsavel: fd.get('responsavel')||"", observacao: fd.get('observacao')||"",
+        concluido: existing? fd.get('concluido')==="on" : false,
+      });
+      if(ok){ toast(existing?"Atividade atualizada.":"Atividade programada criada.","success"); closeModal(); }
+    } finally {
+      fProg.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
 }
 function wireMovimentacoes(){
@@ -1881,10 +1891,18 @@ function wireRelatorios(){
 
   const formAg = document.getElementById('form-agendamento');
   if(formAg) formAg.onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(formAg);
-    const data = {relatorio:fd.get('relatorio'), obra:fd.get('obra'), frequencia:fd.get('frequencia'), horario:fd.get('horario'), formato:fd.get('formato'), destinatarios:fd.get('destinatarios'), ativo:true, ultimaExecucao:null, criadoEm:new Date().toISOString()};
-    const ok = await dbSet("agendamentos", uid("ag"), data);
-    if(ok){ toast("Agendamento salvo.","success"); formAg.reset(); }
+    e.preventDefault();
+    if(formAg.dataset.enviando==="1") return;
+    const __btn = formAg.querySelector('[type="submit"]');
+    formAg.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd=new FormData(formAg);
+      const data = {relatorio:fd.get('relatorio'), obra:fd.get('obra'), frequencia:fd.get('frequencia'), horario:fd.get('horario'), formato:fd.get('formato'), destinatarios:fd.get('destinatarios'), ativo:true, ultimaExecucao:null, criadoEm:new Date().toISOString()};
+      const ok = await dbSet("agendamentos", uid("ag"), data);
+      if(ok){ toast("Agendamento salvo.","success"); formAg.reset(); }
+    } finally {
+      formAg.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
   document.querySelectorAll('[data-exec-agenda]').forEach(el=>el.onclick=async()=>{
     const ag = STATE.agendamentos.find(a=>a._id===el.dataset.execAgenda); if(!ag) return;
@@ -1985,6 +2003,34 @@ function exportXLSX(rows, filename){
   const out = XLSX.write(wb, {bookType:"xlsx", type:"array"});
   saveBlob(filename+".xlsx", new Blob([out], {type:"application/octet-stream"}));
 }
+function exportBackupCompleto(){
+  if(typeof XLSX==="undefined"){ toast("Biblioteca de Excel indisponível — verifique a conexão e recarregue.","error"); return; }
+  const tabelas = [
+    ["Obras", STATE.obras],
+    ["Fornecedores", STATE.fornecedores],
+    ["Materiais", STATE.materiais],
+    ["Estoque", STATE.estoque],
+    ["Lotes", STATE.lotes],
+    ["Requisicoes", STATE.requisicoes.map(r=>({...r, itens: JSON.stringify(r.itens||[])}))],
+    ["Pedidos", STATE.pedidos.map(p=>({...p, itens: JSON.stringify(p.itens||[])}))],
+    ["Movimentacoes", STATE.movimentacoes.map(m=>({...m, lotesConsumidos: JSON.stringify(m.lotesConsumidos||[])}))],
+    ["Programacao", STATE.programacao],
+  ];
+  const wb = XLSX.utils.book_new();
+  let temAlgo = false;
+  tabelas.forEach(([nome, rows])=>{
+    const limpo = (rows||[]).map(r=>{ const o={...r}; delete o._id; return o; });
+    const ws = XLSX.utils.json_to_sheet(limpo.length? limpo : [{"(vazio)":""}]);
+    XLSX.utils.book_append_sheet(wb, ws, nome.slice(0,31));
+    if(limpo.length) temAlgo = true;
+  });
+  if(!temAlgo){ toast("Ainda não há dados carregados para fazer backup.","error"); return; }
+  const out = XLSX.write(wb, {bookType:"xlsx", type:"array"});
+  const agora = new Date();
+  const stamp = todayISO()+"_"+String(agora.getHours()).padStart(2,"0")+String(agora.getMinutes()).padStart(2,"0");
+  saveBlob(`backup_almoxarifado_guandu_${stamp}.xlsx`, new Blob([out], {type:"application/octet-stream"}));
+  toast("Backup completo gerado — guarde este arquivo em local seguro (ex: Google Drive, OneDrive).","success");
+}
 function exportPDF(title, rows, filename){
   if(typeof window.jspdf==="undefined"){ toast("Biblioteca de PDF indisponível.","error"); return; }
   const { jsPDF } = window.jspdf;
@@ -2006,6 +2052,13 @@ let cadastroSub = "materiais";
 function viewCadastros(){
   return `
   <div class="fade-in" style="display:flex;flex-direction:column;gap:14px">
+    <div class="card" style="padding:14px 16px;border-left:4px solid var(--good);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div>
+        <h3 style="margin:0 0 3px;font-size:13px;font-weight:700">Backup &amp; Segurança dos Dados</h3>
+        <div style="font-size:11.5px;color:var(--text-dim);max-width:560px">Baixa um Excel com TODOS os dados do sistema (obras, materiais, estoque, lotes, requisições, pedidos, movimentações e programação) no estado de agora. Guarde em local seguro (Google Drive, OneDrive, pen drive) periodicamente — é sua cópia de segurança independente do banco de dados.</div>
+      </div>
+      <button class="btn btn-primary btn-sm" data-action="backup-completo">⬇ Baixar Backup Completo</button>
+    </div>
     <div style="display:flex;gap:6px">
       ${[["materiais","Materiais"],["obras","Obras"],["fornecedores","Fornecedores"]].map(([id,label])=>`<div class="tab-btn ${cadastroSub===id?'active':''}" data-cad="${id}">${label}</div>`).join("")}
     </div>
@@ -2054,6 +2107,7 @@ function cadastroFornecedoresHTML(){
   </div>`;
 }
 function wireCadastros(){
+  const bb=document.querySelector('[data-action="backup-completo"]'); if(bb) bb.onclick=exportBackupCompleto;
   document.querySelectorAll('[data-cad]').forEach(el=>el.onclick=()=>{ cadastroSub=el.dataset.cad; render(); });
   const bm=document.querySelector('[data-action="novo-material"]'); if(bm) bm.onclick=()=>openModalMaterial();
   const bo=document.querySelector('[data-action="nova-obra"]'); if(bo) bo.onclick=()=>openModalObra();
@@ -2091,28 +2145,24 @@ function openModalMovimentacao(){
       <div><label class="field-label">Responsável</label><input name="responsavel"></div>
       <div><label class="field-label">Aplicação</label><input name="aplicacao"></div>
       <div style="grid-column:span 2"><label class="field-label">Observação</label><textarea name="observacao" rows="2"></textarea></div>
-      ${SAMPLEC?`<div style="grid-column:span 2;background:var(--surface-2);border-radius:8px;padding:8px 10px;font-size:11.5px;color:var(--text-dim)">📷 Prefere preencher a partir de uma foto da requisição em papel? <button type="button" class="btn btn-ghost btn-sm" id="btn-foto-mov" style="margin-left:4px">Preencher por Foto</button></div>`:""}
       <div style="grid-column:span 2;display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div>
     </form>
   `);
   wireModalClose();
-  document.getElementById('form-mov').onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(e.target);
-    const ok = await registrarMovimentacao({...Object.fromEntries(fd), fotoAssetId: e.target.dataset.fotoAssetId||null});
-    if(ok) closeModal();
+  const fMov = document.getElementById('form-mov');
+  fMov.onsubmit = async(e)=>{
+    e.preventDefault();
+    if(fMov.dataset.enviando==="1") return;
+    const __btn = fMov.querySelector('[type="submit"]');
+    fMov.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd=new FormData(e.target);
+      const ok = await registrarMovimentacao({...Object.fromEntries(fd), fotoAssetId: e.target.dataset.fotoAssetId||null});
+      if(ok) closeModal();
+    } finally {
+      fMov.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
-  const bf = document.getElementById('btn-foto-mov');
-  if(bf) bf.onclick = ()=> abrirCapturaFoto(async(dados)=>{
-    const f = document.getElementById('form-mov'); if(!f) return;
-    if(dados.material) f.querySelector('[name="material"]').value = dados.material;
-    if(dados.quantidade) f.querySelector('[name="quantidade"]').value = dados.quantidade;
-    if(dados.lote) f.querySelector('[name="lote"]').value = dados.lote;
-    if(dados.aplicacao) f.querySelector('[name="aplicacao"]').value = dados.aplicacao;
-    if(dados.responsavel) f.querySelector('[name="responsavel"]').value = dados.responsavel;
-    if(dados._fotoAssetId) f.dataset.fotoAssetId = dados._fotoAssetId;
-    f.querySelector('[name="observacao"]').value = "Preenchido a partir de foto — conferir antes de salvar.";
-    toast("Rascunho preenchido a partir da foto. Confira os campos antes de salvar.","info");
-  });
 }
 function openModalAjuste(){
   openModal(`
@@ -2127,63 +2177,28 @@ function openModalAjuste(){
     </form>
   `);
   wireModalClose();
-  document.getElementById('form-ajuste').onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(e.target);
-    const obra=fd.get('obra'), material=fd.get('material');
-    const est = estoqueOf(obra,material); const saldoAtual = est?Number(est.saldoAtual)||0:0;
-    const saldoContado = Number(fd.get('saldoContado'));
-    const diff = saldoContado - saldoAtual;
-    if(Math.abs(diff)<0.0001){ toast("Saldo contado é igual ao saldo atual — nenhum ajuste necessário.","info"); closeModal(); return; }
-    // O trigger do banco ajusta estoque e lotes automaticamente ao inserir esta movimentação.
-    await dbSet("movimentacoes", uid("mov"), {obra,material,tipo: diff>=0?"entrada":"saida", quantidade:Math.abs(diff), lote:"", data:todayISO(), responsavel:fd.get('responsavel')||"—", origem:"inventario", rm:null, observacao:fd.get('observacao')||""});
-    toast("Ajuste de inventário registrado.","success"); closeModal();
-  };
-}
-function openModalEditarEstoque(){ /* reserved */ }
-
-/* ---------- Preenchimento por foto (capability "sample") ---------- */
-function abrirCapturaFoto(onExtracted){
-  if(!SAMPLEC){
-    toast("Leitura de foto indisponível nesta visualização (recurso 'sample' não habilitado).","error");
-    return;
-  }
-  openModal(`
-    ${modalHeader("Preencher por Foto")}
-    <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px">Tire uma foto ou selecione a imagem da requisição/etiqueta preenchida à mão. A Claude vai ler o conteúdo e pré-preencher o formulário — você confere e confirma antes de salvar.</div>
-    <input type="file" id="foto-input" accept="image/*" capture="environment" style="margin-bottom:10px">
-    <div id="foto-preview" style="margin-bottom:10px"></div>
-    <div id="foto-status" style="font-size:12.5px;color:var(--text-dim)"></div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:10px"><button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button></div>
-  `);
-  wireModalClose();
-  const input = document.getElementById('foto-input');
-  input.onchange = async ()=>{
-    const file = input.files[0]; if(!file) return;
-    const preview = document.getElementById('foto-preview');
-    preview.innerHTML = `<img src="${URL.createObjectURL(file)}" style="max-width:100%;max-height:220px;border-radius:8px;border:1px solid var(--border)">`;
-    const status = document.getElementById('foto-status');
-    status.textContent = "Lendo imagem…";
+  const fAjuste = document.getElementById('form-ajuste');
+  fAjuste.onsubmit = async(e)=>{
+    e.preventDefault();
+    if(fAjuste.dataset.enviando==="1") return;
+    const __btn = fAjuste.querySelector('[type="submit"]');
+    fAjuste.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
     try{
-      const materiaisRef = STATE.materiais.map(m=>`${m.codigo} (${m.nome})`).join("; ");
-      const prompt = `Você está lendo a foto de uma requisição de material (ou etiqueta) de almoxarifado de obra, preenchida à mão ou impressa.
-Extraia em JSON estrito, sem comentários, no formato:
-{"material": "<código do material mais parecido da lista abaixo, ou null>", "quantidade": <número ou null>, "lote": "<texto ou null>", "aplicacao": "<texto curto ou null>", "responsavel": "<nome ou null>"}
-Lista de materiais cadastrados (escolha o código mais compatível pelo nome/contexto, nunca invente um código fora da lista): ${materiaisRef}
-Se não conseguir ler algum campo com confiança, retorne null nesse campo. Responda SOMENTE com o JSON.`;
-      const result = await SAMPLEC.json(prompt, {images:[file], modelTier:"quick"});
-      status.textContent = "Leitura concluída.";
-      let fotoId = null;
-      if(ASSETSC){ try{ const up = await ASSETSC.upload(file); fotoId = up && up.id; }catch(e){ console.error("upload foto falhou",e); } }
-      onExtracted({...(result||{}), _fotoAssetId: fotoId});
-      closeModal();
-    }catch(e){
-      console.error(e);
-      if(e && e.code==="not_granted"){ status.textContent="Permissão de leitura não concedida."; }
-      else if(e && e.code==="rate_limited"){ status.textContent="Muitas tentativas — aguarde um instante e tente novamente."; }
-      else{ status.textContent="Não foi possível ler a imagem. Preencha manualmente."; }
+      const fd=new FormData(e.target);
+      const obra=fd.get('obra'), material=fd.get('material');
+      const est = estoqueOf(obra,material); const saldoAtual = est?Number(est.saldoAtual)||0:0;
+      const saldoContado = Number(fd.get('saldoContado'));
+      const diff = saldoContado - saldoAtual;
+      if(Math.abs(diff)<0.0001){ toast("Saldo contado é igual ao saldo atual — nenhum ajuste necessário.","info"); closeModal(); return; }
+      // O trigger do banco ajusta estoque e lotes automaticamente ao inserir esta movimentação.
+      await dbSet("movimentacoes", uid("mov"), {obra,material,tipo: diff>=0?"entrada":"saida", quantidade:Math.abs(diff), lote:"", data:todayISO(), responsavel:fd.get('responsavel')||"—", origem:"inventario", rm:null, observacao:fd.get('observacao')||""});
+      toast("Ajuste de inventário registrado.","success"); closeModal();
+    } finally {
+      fAjuste.dataset.enviando = ""; if(__btn) __btn.disabled = false;
     }
   };
 }
+function openModalEditarEstoque(){ /* reserved */ }
 
 function openModalRM(numero){
   const rm = numero ? STATE.requisicoes.find(r=>r.numero===numero) : null;
@@ -2220,16 +2235,25 @@ function openModalRM(numero){
   if(rm){
     document.querySelectorAll('[data-change-status]').forEach(el=>el.onclick=async()=>{ await mudarStatusRM(rm, el.dataset.changeStatus); closeModal(); });
   }
-  document.getElementById('form-rm').onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(e.target);
-    const obra = fd.get('obra');
-    const mats = fd.getAll('item-material'); const qtds = fd.getAll('item-qtd');
-    const itens = mats.map((m,i)=>({material:m, qtd:Number(qtds[i])||0, atendido: rm? (rm.itens[i]?.atendido||0):0})).filter(i=>i.material && i.qtd>0);
-    if(!itens.length){ toast("Adicione ao menos um item válido.","error"); return; }
-    const numero = rm ? rm.numero : `RM-${obra}-${String(Math.floor(1000+Math.random()*9000))}`;
-    const data = { numero, obra, abertura: rm? rm.abertura : todayISO(), previsao: fd.get('previsao'), solicitante: fd.get('solicitante'), responsavel: fd.get('responsavel')||"—", aplicacao: fd.get('aplicacao'), status: rm? rm.status : "aberta", itens, pedido: rm? rm.pedido : null };
-    const ok = await dbSet("requisicoes", numero, data);
-    if(ok){ toast(rm?"Requisição atualizada.":"Requisição criada: "+numero, "success"); closeModal(); }
+  const fRm = document.getElementById('form-rm');
+  fRm.onsubmit = async(e)=>{
+    e.preventDefault();
+    if(fRm.dataset.enviando==="1") return;
+    const __btn = fRm.querySelector('[type="submit"]');
+    fRm.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd=new FormData(e.target);
+      const obra = fd.get('obra');
+      const mats = fd.getAll('item-material'); const qtds = fd.getAll('item-qtd');
+      const itens = mats.map((m,i)=>({material:m, qtd:Number(qtds[i])||0, atendido: rm? (rm.itens[i]?.atendido||0):0})).filter(i=>i.material && i.qtd>0);
+      if(!itens.length){ toast("Adicione ao menos um item válido.","error"); return; }
+      const numero = rm ? rm.numero : `RM-${obra}-${String(Math.floor(1000+Math.random()*9000))}`;
+      const data = { numero, obra, abertura: rm? rm.abertura : todayISO(), previsao: fd.get('previsao'), solicitante: fd.get('solicitante'), responsavel: fd.get('responsavel')||"—", aplicacao: fd.get('aplicacao'), status: rm? rm.status : "aberta", itens, pedido: rm? rm.pedido : null };
+      const ok = await dbSet("requisicoes", numero, data);
+      if(ok){ toast(rm?"Requisição atualizada.":"Requisição criada: "+numero, "success"); closeModal(); }
+    } finally {
+      fRm.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
 }
 function itemRowHTML(i,idx){
@@ -2263,13 +2287,22 @@ function openModalRMUrgente(){
     </form>
   `);
   wireModalClose();
-  document.getElementById('form-rm-urgente').onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(e.target);
-    const obraSel = fd.get('obra');
-    const itensObra = (byObra[obraSel]||itens).map(r=>({material:r.Material||r.material, qtd:r["Reposição Sug."]||r.qtd||10, atendido:0}));
-    const numero = `RM-${obraSel}-U${String(Math.floor(100+Math.random()*900))}`;
-    await dbSet("requisicoes", numero, {numero, obra:obraSel, abertura:todayISO(), previsao:fd.get('previsao'), solicitante:fd.get('solicitante'), responsavel:fd.get('responsavel'), aplicacao:fd.get('aplicacao'), status:"aberta", itens:itensObra, pedido:null});
-    toast("RM urgente criada: "+numero, "success"); closeModal();
+  const fRmU = document.getElementById('form-rm-urgente');
+  fRmU.onsubmit = async(e)=>{
+    e.preventDefault();
+    if(fRmU.dataset.enviando==="1") return;
+    const __btn = fRmU.querySelector('[type="submit"]');
+    fRmU.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd=new FormData(e.target);
+      const obraSel = fd.get('obra');
+      const itensObra = (byObra[obraSel]||itens).map(r=>({material:r.Material||r.material, qtd:r["Reposição Sug."]||r.qtd||10, atendido:0}));
+      const numero = `RM-${obraSel}-U${String(Math.floor(100+Math.random()*900))}`;
+      await dbSet("requisicoes", numero, {numero, obra:obraSel, abertura:todayISO(), previsao:fd.get('previsao'), solicitante:fd.get('solicitante'), responsavel:fd.get('responsavel'), aplicacao:fd.get('aplicacao'), status:"aberta", itens:itensObra, pedido:null});
+      toast("RM urgente criada: "+numero, "success"); closeModal();
+    } finally {
+      fRmU.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
 }
 
@@ -2296,22 +2329,31 @@ function openModalPC(numero){
   wireModalClose();
   document.getElementById('add-item-pc').onclick=()=>{ document.getElementById('pc-itens').insertAdjacentHTML('beforeend', itemRowHTML({material:"",qtd:""})); wireItemRemovers(); };
   wireItemRemovers();
-  document.getElementById('form-pc').onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(e.target);
-    const mats=fd.getAll('item-material'), qtds=fd.getAll('item-qtd');
-    const itens = mats.map((m,i)=>({material:m,qtd:Number(qtds[i])||0})).filter(i=>i.material&&i.qtd>0);
-    const numero = pc? pc.numero : `PC-${new Date().getFullYear()}-${String(Math.floor(1000+Math.random()*9000))}`;
-    const entregaReal = fd.get('entregaReal')||null;
-    let status = fd.get('status') || 'pendente';
-    if(!pc && !entregaReal) status='pendente';
-    const data = {numero, obra: fd.get('obra'), fornecedor:fd.get('fornecedor'), itens, emissao:fd.get('emissao'), previsaoEntrega:fd.get('previsaoEntrega'), entregaReal, status};
-    const ok = await dbSet("pedidos", numero, data);
-    if(ok){
-      if(entregaReal && (!pc || pc.entregaReal!==entregaReal)){
-        const validadeLote = fd.get('validadeLote')||null;
-        for(const it of itens){ await registrarMovimentacao({obra:data.obra, material:it.material, tipo:'entrada', quantidade:it.qtd, lote:numero, validade:validadeLote, responsavel:"Recebimento", observacao:"Recebimento do pedido "+numero}); }
+  const fPc = document.getElementById('form-pc');
+  fPc.onsubmit = async(e)=>{
+    e.preventDefault();
+    if(fPc.dataset.enviando==="1") return;
+    const __btn = fPc.querySelector('[type="submit"]');
+    fPc.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd=new FormData(e.target);
+      const mats=fd.getAll('item-material'), qtds=fd.getAll('item-qtd');
+      const itens = mats.map((m,i)=>({material:m,qtd:Number(qtds[i])||0})).filter(i=>i.material&&i.qtd>0);
+      const numero = pc? pc.numero : `PC-${new Date().getFullYear()}-${String(Math.floor(1000+Math.random()*9000))}`;
+      const entregaReal = fd.get('entregaReal')||null;
+      let status = fd.get('status') || 'pendente';
+      if(!pc && !entregaReal) status='pendente';
+      const data = {numero, obra: fd.get('obra'), fornecedor:fd.get('fornecedor'), itens, emissao:fd.get('emissao'), previsaoEntrega:fd.get('previsaoEntrega'), entregaReal, status};
+      const ok = await dbSet("pedidos", numero, data);
+      if(ok){
+        if(entregaReal && (!pc || pc.entregaReal!==entregaReal)){
+          const validadeLote = fd.get('validadeLote')||null;
+          for(const it of itens){ await registrarMovimentacao({obra:data.obra, material:it.material, tipo:'entrada', quantidade:it.qtd, lote:numero, validade:validadeLote, responsavel:"Recebimento", observacao:"Recebimento do pedido "+numero}); }
+        }
+        toast(pc?"Pedido atualizado.":"Pedido criado: "+numero,"success"); closeModal();
       }
-      toast(pc?"Pedido atualizado.":"Pedido criado: "+numero,"success"); closeModal();
+    } finally {
+      fPc.dataset.enviando = ""; if(__btn) __btn.disabled = false;
     }
   };
 }
@@ -2330,11 +2372,20 @@ function openModalMaterial(codigo){
     </form>
   `);
   wireModalClose();
-  document.getElementById('form-material').onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(e.target);
-    const codigo=fd.get('codigo');
-    const ok = await dbSet("materiais", codigo, {codigo, nome:fd.get('nome'), categoria:fd.get('categoria'), unidade:fd.get('unidade'), critico: fd.get('critico')==="true"});
-    if(ok){ toast("Material salvo.","success"); closeModal(); }
+  const fMat = document.getElementById('form-material');
+  fMat.onsubmit = async(e)=>{
+    e.preventDefault();
+    if(fMat.dataset.enviando==="1") return;
+    const __btn = fMat.querySelector('[type="submit"]');
+    fMat.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd=new FormData(e.target);
+      const codigo=fd.get('codigo');
+      const ok = await dbSet("materiais", codigo, {codigo, nome:fd.get('nome'), categoria:fd.get('categoria'), unidade:fd.get('unidade'), critico: fd.get('critico')==="true"});
+      if(ok){ toast("Material salvo.","success"); closeModal(); }
+    } finally {
+      fMat.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
 }
 function openModalObra(codigo){
@@ -2349,10 +2400,19 @@ function openModalObra(codigo){
     </form>
   `);
   wireModalClose();
-  document.getElementById('form-obra').onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(e.target); const codigo=fd.get('codigo');
-    const ok = await dbSet("obras", codigo, {codigo, nome:fd.get('nome'), ativa: fd.get('ativa')==="true"});
-    if(ok){ toast("Obra salva.","success"); closeModal(); }
+  const fObra = document.getElementById('form-obra');
+  fObra.onsubmit = async(e)=>{
+    e.preventDefault();
+    if(fObra.dataset.enviando==="1") return;
+    const __btn = fObra.querySelector('[type="submit"]');
+    fObra.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd=new FormData(e.target); const codigo=fd.get('codigo');
+      const ok = await dbSet("obras", codigo, {codigo, nome:fd.get('nome'), ativa: fd.get('ativa')==="true"});
+      if(ok){ toast("Obra salva.","success"); closeModal(); }
+    } finally {
+      fObra.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
 }
 function openModalFornecedor(codigo){
@@ -2368,10 +2428,19 @@ function openModalFornecedor(codigo){
     </form>
   `);
   wireModalClose();
-  document.getElementById('form-fornecedor').onsubmit = async(e)=>{
-    e.preventDefault(); const fd=new FormData(e.target); const codigo=fd.get('codigo');
-    const ok = await dbSet("fornecedores", codigo, {codigo, nome:fd.get('nome'), cidade:fd.get('cidade'), uf:fd.get('uf')});
-    if(ok){ toast("Fornecedor salvo.","success"); closeModal(); }
+  const fForn = document.getElementById('form-fornecedor');
+  fForn.onsubmit = async(e)=>{
+    e.preventDefault();
+    if(fForn.dataset.enviando==="1") return;
+    const __btn = fForn.querySelector('[type="submit"]');
+    fForn.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd=new FormData(e.target); const codigo=fd.get('codigo');
+      const ok = await dbSet("fornecedores", codigo, {codigo, nome:fd.get('nome'), cidade:fd.get('cidade'), uf:fd.get('uf')});
+      if(ok){ toast("Fornecedor salvo.","success"); closeModal(); }
+    } finally {
+      fForn.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
   };
 }
 
