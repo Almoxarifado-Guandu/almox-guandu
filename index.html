@@ -354,6 +354,21 @@ function pill(label,colorVar){
   return `<span class="pill" style="background:var(--${colorVar}-soft);color:var(--${colorVar})"><span class="dot" style="background:var(--${colorVar})"></span>${esc(label)}</span>`;
 }
 
+/* ---------- Classificação única de situação de estoque ----------
+   Fonte única da verdade: toda tela/relatório/alerta do sistema chama ESTA função
+   para classificar um material. Nunca duplicar essa regra em outro lugar.
+   Regra: compara o DISPONÍVEL (saldo - reservado) contra o Mínimo cadastrado.
+   Igualdade (disponível == mínimo) conta como "De acordo" (usa "<", nunca "<="). */
+const SITUACAO_ESTOQUE = { ZERO:"🔴 Sem estoque", BAIXO:"🟠 Abaixo do mínimo", OK:"🟢 De acordo" };
+const SITUACAO_COR = { [SITUACAO_ESTOQUE.ZERO]:"bad", [SITUACAO_ESTOQUE.BAIXO]:"warn", [SITUACAO_ESTOQUE.OK]:"good" };
+function calcDisponivel(e){ return (e&&e.saldoAtual||0) - (e&&e.reservado||0); }
+function calcSituacaoEstoque(disponivel, minimo){
+  if(disponivel<=0) return SITUACAO_ESTOQUE.ZERO;
+  if(disponivel<(minimo||0)) return SITUACAO_ESTOQUE.BAIXO;
+  return SITUACAO_ESTOQUE.OK;
+}
+function situacaoCellRenderer(v){ return pill(v, SITUACAO_COR[v]||"info"); }
+
 /* ---------- Categories ---------- */
 const CATEGORIAS = ["Aço & Estrutural","Elétrica & Automação","Hidráulica & Tubulação","EPI & Segurança","Cimento & Agregados","Fixadores & Consumíveis","Ferramentas & Equipamentos","Químicos & Tratamento","Outros"];
 const UNIDADES = ["UN","M","M²","M³","KG","TON","L","PAR","SC","BR","RL"];
@@ -665,8 +680,9 @@ async function registrarMovimentacao({obra,material,tipo,quantidade,lote,validad
   if(!ok1) return false;
   toast(`${tipo==="entrada"?"Entrada":"Saída"} registrada: ${quantidade} ${materialByCode(material).unidade} de ${material}.`,"success");
   const novoSaldo = saldoAtual + delta;
+  const novoDisponivel = novoSaldo - (est? Number(est.reservado)||0 : 0);
   const m = materialByCode(material);
-  if(tipo==="saida" && m.critico && (est? (est.minimo||0):0) > novoSaldo){
+  if(tipo==="saida" && m.critico && calcSituacaoEstoque(novoDisponivel, est?est.minimo:0)!==SITUACAO_ESTOQUE.OK){
     toast(`⚠ Material crítico ${material} abaixo do estoque mínimo!`,"error");
   }
   return true;
@@ -722,7 +738,7 @@ const REPORTS = [
   {group:"requisicoes", id:"rm_por_aplicacao", title:"Requisições por aplicação", rows:(f)=>rmRows(f.rm), groupField:"Aplicação"},
   {group:"requisicoes", id:"rm_historico", title:"Histórico completo de cada RM", rows:(f)=>rmRows(f.rm)},
 
-  {group:"estoque", id:"est_posicao", title:"Posição atual de estoque", rows:(f)=>estoqueVisivel().filter(f.mat).map(e=>({"Obra":e.obra,"Material":e.material,"Nome":materialByCode(e.material).nome,"Categoria":materialByCode(e.material).categoria,"UN":materialByCode(e.material).unidade,"Saldo Atual":e.saldoAtual,"Reservado":e.reservado||0,"Disponível":(e.saldoAtual||0)-(e.reservado||0),"Mínimo":e.minimo||0,"Endereço":e.endereco||"—","Situação": ((e.saldoAtual||0)-(e.reservado||0))<=0?"Sem estoque":((e.saldoAtual||0)-(e.reservado||0))<(e.minimo||0)?"Abaixo do mínimo":"Normal"})) },
+  {group:"estoque", id:"est_posicao", title:"Posição atual de estoque", rows:(f)=>estoqueVisivel().filter(f.mat).map(e=>({"Obra":e.obra,"Material":e.material,"Nome":materialByCode(e.material).nome,"Categoria":materialByCode(e.material).categoria,"UN":materialByCode(e.material).unidade,"Saldo Atual":e.saldoAtual,"Reservado":e.reservado||0,"Disponível":calcDisponivel(e),"Mínimo":e.minimo||0,"Endereço":e.endereco||"—","Situação": calcSituacaoEstoque(calcDisponivel(e), e.minimo)})) },
   {group:"estoque", id:"est_saldo_individual", title:"Saldo individual por material", rows:(f)=>estoqueVisivel().filter(f.mat).map(e=>({"Material":e.material,"Nome":materialByCode(e.material).nome,"Obra":e.obra,"Saldo":e.saldoAtual,"UN":materialByCode(e.material).unidade}))},
   {group:"estoque", id:"est_entradas", title:"Entradas por período", rows:(f)=>movimentacoesVisiveis().filter(m=>m.tipo==="entrada"&&f.mov(m)).map(m=>({"Data":fmtDateBR(m.data),"Obra":m.obra,"Material":m.material,"Nome":materialByCode(m.material).nome,"Qtd":m.quantidade,"Lote":m.lote||"—","Responsável":m.responsavel,"Origem":m.origem}))},
   {group:"estoque", id:"est_saidas", title:"Saídas por período", rows:(f)=>movimentacoesVisiveis().filter(m=>m.tipo==="saida"&&f.mov(m)).map(m=>({"Data":fmtDateBR(m.data),"Obra":m.obra,"Material":m.material,"Nome":materialByCode(m.material).nome,"Qtd":m.quantidade,"Lote":m.lote||"—","Aplicação":m.aplicacao||"—","Responsável":m.responsavel,"Origem":m.origem}))},
@@ -737,16 +753,16 @@ const REPORTS = [
   {group:"estoque", id:"est_ajustes", title:"Ajustes de estoque", rows:(f)=>movimentacoesVisiveis().filter(m=>m.origem==="ajuste"&&f.mov(m)).map(m=>({"Data":fmtDateBR(m.data),"Obra":m.obra,"Material":m.material,"Qtd":m.quantidade,"Observação":m.observacao||"—"}))},
   {group:"estoque", id:"est_inventarios", title:"Inventários realizados", rows:(f)=>movimentacoesVisiveis().filter(m=>m.origem==="inventario"&&f.mov(m)).map(m=>({"Data":fmtDateBR(m.data),"Obra":m.obra,"Material":m.material,"Qtd Ajustada":m.quantidade,"Observação":m.observacao||"—"}))},
   {group:"estoque", id:"est_divergencias", title:"Divergências encontradas", rows:(f)=>movimentacoesVisiveis().filter(m=>m.origem==="inventario"&&Math.abs(m.quantidade)>0&&f.mov(m)).map(m=>({"Data":fmtDateBR(m.data),"Material":m.material,"Divergência":m.quantidade,"Observação":m.observacao||"—"}))},
-  {group:"estoque", id:"est_abaixo_minimo", title:"Materiais abaixo do estoque mínimo", rows:(f)=>estoqueVisivel().filter(e=>(e.saldoAtual||0)<(e.minimo||0)&&f.mat(e)).map(e=>({"Obra":e.obra,"Material":e.material,"Nome":materialByCode(e.material).nome,"Saldo":e.saldoAtual,"Mínimo":e.minimo,"Déficit":(e.minimo||0)-(e.saldoAtual||0)}))},
-  {group:"estoque", id:"est_sem_estoque", title:"Materiais sem estoque", rows:(f)=>estoqueVisivel().filter(e=>(e.saldoAtual||0)<=0&&f.mat(e)).map(e=>({"Obra":e.obra,"Material":e.material,"Nome":materialByCode(e.material).nome,"Endereço":e.endereco||"—"}))},
+  {group:"estoque", id:"est_abaixo_minimo", title:"Materiais abaixo do estoque mínimo", rows:(f)=>estoqueVisivel().filter(e=>calcSituacaoEstoque(calcDisponivel(e),e.minimo)===SITUACAO_ESTOQUE.BAIXO&&f.mat(e)).map(e=>({"Obra":e.obra,"Material":e.material,"Nome":materialByCode(e.material).nome,"Saldo":e.saldoAtual,"Reservado":e.reservado||0,"Disponível":calcDisponivel(e),"Mínimo":e.minimo,"Déficit":(e.minimo||0)-calcDisponivel(e)}))},
+  {group:"estoque", id:"est_sem_estoque", title:"Materiais sem estoque", rows:(f)=>estoqueVisivel().filter(e=>calcSituacaoEstoque(calcDisponivel(e),e.minimo)===SITUACAO_ESTOQUE.ZERO&&f.mat(e)).map(e=>({"Obra":e.obra,"Material":e.material,"Nome":materialByCode(e.material).nome,"Endereço":e.endereco||"—"}))},
   {group:"estoque", id:"est_evolucao", title:"Evolução histórica dos saldos", chart:"evolucao"},
 
   {group:"criticos", id:"crit_posicao", title:"Posição atual dos materiais críticos", rows:(f)=>criticosRows(f)},
   {group:"criticos", id:"crit_minimo", title:"Estoque mínimo configurado & alertas", rows:(f)=>criticosRows(f).filter(r=>r["Saldo Atual"]<r["Est. Mínimo"])},
   {group:"criticos", id:"crit_seguranca", title:"Estoque de segurança", rows:(f)=>criticosRows(f)},
   {group:"criticos", id:"crit_consumo_medio", title:"Consumo médio", rows:(f)=>criticosRows(f)},
-  {group:"criticos", id:"crit_situacao", title:"Materiais em situação crítica", rows:(f)=>criticosRows(f).filter(r=>r["Situação"]!=="Controlado")},
-  {group:"criticos", id:"crit_ruptura", title:"Materiais com risco de ficar sem estoque", rows:(f)=>criticosRows(f).filter(r=>r["Situação"]==="Estoque Zerado (Urgente)"||r["Cobertura (d)"]!=="—"&&r["Cobertura (d)"]<=5)},
+  {group:"criticos", id:"crit_situacao", title:"Materiais em situação crítica", rows:(f)=>criticosRows(f).filter(r=>r["Situação"]!==SITUACAO_ESTOQUE.OK)},
+  {group:"criticos", id:"crit_ruptura", title:"Materiais com risco de ficar sem estoque", rows:(f)=>criticosRows(f).filter(r=>r["Situação"]===SITUACAO_ESTOQUE.ZERO||r["Cobertura (d)"]!=="—"&&r["Cobertura (d)"]<=5)},
   {group:"criticos", id:"crit_necessidade", title:"Necessidade estimada de reposição", rows:(f)=>criticosRows(f).filter(r=>r["Reposição Sug."]>0)},
   {group:"criticos", id:"crit_previsao_esgotamento", title:"Previsão de esgotamento", rows:(f)=>criticosRows(f)},
   {group:"criticos", id:"crit_historico_consumo", title:"Histórico de consumo dos críticos", chart:"consumo_criticos"},
@@ -799,11 +815,8 @@ function criticosRows(f){
     const disponivel = (e.saldoAtual||0)-(e.reservado||0);
     const consumoDia = consumoMedioMes/30;
     const cobertura = consumoDia>0 ? Math.round(disponivel/consumoDia) : "—";
-    let situacao = "Controlado";
-    if(disponivel<=0) situacao="Estoque Zerado (Urgente)";
-    else if(disponivel<(e.minimo||0)) situacao="Abaixo do Mínimo (Alerta IM)";
-    else if(disponivel<(e.seguranca||0)) situacao="Em Estoque de Segurança";
-    const reposicaoSug = situacao!=="Controlado" ? Math.max((e.seguranca||0)-disponivel, (e.minimo||0)) : 0;
+    const situacao = calcSituacaoEstoque(disponivel, e.minimo);
+    const reposicaoSug = situacao!==SITUACAO_ESTOQUE.OK ? Math.max((e.seguranca||0)-disponivel, (e.minimo||0)) : 0;
     const prevEsgot = (consumoDia>0 && cobertura!=="—") ? new Date(Date.now()+cobertura*86400000).toISOString().slice(0,10) : null;
     return {
       "Obra":e.obra,"Material":e.material,"Nome":materialByCode(e.material).nome,
@@ -1041,7 +1054,7 @@ function wireHeader(){
 function alertaBannerHTML(){
   if(!allLoaded()) return "";
   const criticos = criticosRows({mat:()=>true});
-  const alertas = criticos.filter(r=>r["Situação"]!=="Controlado");
+  const alertas = criticos.filter(r=>r["Situação"]!==SITUACAO_ESTOQUE.OK);
   if(!alertas.length) return "";
   const porObra = groupBy(alertas, r=>r.Obra);
   const txt = Object.entries(porObra).map(([o,l])=>`Obra ${o}: ${l.length}`).join(" · ");
@@ -1108,8 +1121,8 @@ function viewPainel(){
   const rms = requisicoesVisiveis();
   const pcs = pedidosVisiveis();
   const kpi = desempenhoKPIs({rm:()=>true});
-  const abaixoMin = est.filter(e=>(e.saldoAtual||0)<(e.minimo||0)).length;
-  const semEstoque = est.filter(e=>(e.saldoAtual||0)<=0).length;
+  const abaixoMin = est.filter(e=>calcSituacaoEstoque(calcDisponivel(e),e.minimo)===SITUACAO_ESTOQUE.BAIXO).length;
+  const semEstoque = est.filter(e=>calcSituacaoEstoque(calcDisponivel(e),e.minimo)===SITUACAO_ESTOQUE.ZERO).length;
   const atrasadasRM = rms.filter(r=>rmAtrasoDias(r)>0).length;
   const pendentesPC = pcs.filter(p=>p.status==="pendente"||p.status==="atrasado").length;
   const consumoPeriodo = sum(movimentacoesVisiveis().filter(m=>m.tipo==="saida"),m=>m.quantidade);
@@ -1175,7 +1188,7 @@ function kpiTile(label,value,color){
 }
 function conclusoesAutomaticas(est,rms,pcs,kpi){
   const out=[];
-  const abaixoMin = est.filter(e=>(e.saldoAtual||0)<(e.minimo||0));
+  const abaixoMin = est.filter(e=>calcSituacaoEstoque(calcDisponivel(e),e.minimo)===SITUACAO_ESTOQUE.BAIXO);
   if(abaixoMin.length) out.push(`${abaixoMin.length} posição(ões) de estoque estão abaixo do mínimo configurado — priorizar reposição de ${abaixoMin.slice(0,3).map(e=>e.material).join(", ")}${abaixoMin.length>3?"…":""}.`);
   else out.push("Nenhuma posição de estoque abaixo do mínimo no momento.");
   const atrasadas = rms.filter(r=>rmAtrasoDias(r)>0);
@@ -1193,7 +1206,7 @@ function gerarResumoDoDia(){
   const movsHoje = movimentacoesVisiveis().filter(m=>m.data===hoje);
   const entradas = movsHoje.filter(m=>m.tipo==="entrada");
   const saidas = movsHoje.filter(m=>m.tipo==="saida");
-  const crit = criticosRows({mat:()=>true}).filter(r=>r["Situação"]!=="Controlado");
+  const crit = criticosRows({mat:()=>true}).filter(r=>r["Situação"]!==SITUACAO_ESTOQUE.OK);
   const rmAtrasadas = requisicoesVisiveis().filter(r=>rmAtrasoDias(r)>0);
   const rmAguardando = requisicoesVisiveis().filter(r=>["aberta","aguardando_compra","aguardando_entrega"].includes(r.status));
   const pcAtrasados = pedidosVisiveis().filter(p=>pcAtrasoDias(p)>0);
@@ -1276,12 +1289,12 @@ function wirePainel(){
   }
   // Criticos pizza
   const crit = criticosRows({mat:()=>true});
-  const counts = {Controlado:0,"Em Estoque de Segurança":0,"Abaixo do Mínimo (Alerta IM)":0,"Estoque Zerado (Urgente)":0};
+  const counts = {[SITUACAO_ESTOQUE.OK]:0,[SITUACAO_ESTOQUE.BAIXO]:0,[SITUACAO_ESTOQUE.ZERO]:0};
   crit.forEach(r=> counts[r["Situação"]] = (counts[r["Situação"]]||0)+1);
   const ctx2 = document.getElementById('chart-criticos-pizza');
   if(ctx2){
     chartRefs.criticos = new Chart(ctx2, {type:'doughnut', data:{
-      labels:Object.keys(counts), datasets:[{data:Object.values(counts), backgroundColor:[c('--good'),c('--warn'),c('--bad'),'#7a1f1f']}]
+      labels:Object.keys(counts), datasets:[{data:Object.values(counts), backgroundColor:[c('--good'),c('--warn'),c('--bad')]}]
     }, options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{color:c('--text-dim'),boxWidth:10,font:{size:10}}}}}});
   }
   // RM status
@@ -1303,7 +1316,7 @@ function wirePainel(){
 }
 function exportPainel(kind){
   const est = estoqueVisivel();
-  const rows = est.map(e=>({Obra:e.obra,Material:e.material,Nome:materialByCode(e.material).nome,Saldo:e.saldoAtual,Minimo:e.minimo}));
+  const rows = est.map(e=>({Obra:e.obra,Material:e.material,Nome:materialByCode(e.material).nome,Saldo:e.saldoAtual,Reservado:e.reservado||0,Disponivel:(e.saldoAtual||0)-(e.reservado||0),Minimo:e.minimo}));
   if(kind==="xlsx-painel") exportXLSX(rows,"Relatorio_Gerencial");
   if(kind==="pdf-painel") exportPDF("Relatório Gerencial Consolidado", rows, "Relatorio_Gerencial");
 }
@@ -1351,10 +1364,6 @@ function viewCriticosOperacional(){
       <div class="scrollx">${tableHTML(rows, {"Situação": situacaoCellRenderer})}</div>
     </div>
   </div>`;
-}
-function situacaoCellRenderer(v){
-  const map = {"Controlado":"good","Em Estoque de Segurança":"warn","Abaixo do Mínimo (Alerta IM)":"warn","Estoque Zerado (Urgente)":"bad"};
-  return pill(v, map[v]||"info");
 }
 function wireCriticosOperacional(){
   const f = document.getElementById('form-retirada-rapida');
@@ -1491,11 +1500,10 @@ function viewEstoqueOperacional(){
   const rows = estoqueVisivel().map(e=>({
     _raw:e, "Obra":e.obra, "Material":e.material, "Nome":materialByCode(e.material).nome, "Categoria":materialByCode(e.material).categoria,
     "Crítico": materialByCode(e.material).critico?"Sim":"Não",
-    "Saldo Atual":e.saldoAtual||0, "Reservado":e.reservado||0, "Disponível": (e.saldoAtual||0)-(e.reservado||0),
+    "Saldo Atual":e.saldoAtual||0, "Reservado":e.reservado||0, "Disponível": calcDisponivel(e),
     "Mínimo":e.minimo||0, "Endereço":e.endereco||"—",
-    // Compara o DISPONÍVEL (saldo menos o que já está reservado), não o saldo bruto —
-    // reservado já tem destino certo, então não conta como "disponível" de verdade.
-    "Situação": ((e.saldoAtual||0)-(e.reservado||0))<=0?"Sem estoque":((e.saldoAtual||0)-(e.reservado||0))<(e.minimo||0)?"Abaixo do mínimo":"Normal",
+    "Situação": calcSituacaoEstoque(calcDisponivel(e), e.minimo),
+    "Ação": e.id,
   }));
   return `
   <div class="fade-in" style="display:flex;flex-direction:column;gap:14px">
@@ -1509,11 +1517,11 @@ function viewEstoqueOperacional(){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px">
       ${kpiTile("Posições", rows.length, "info")}
       ${kpiTile("Saldo Total", fmtNum(sum(rows,r=>r["Saldo Atual"])), "info")}
-      ${kpiTile("Abaixo do Mínimo", rows.filter(r=>r["Situação"]==="Abaixo do mínimo").length, "warn")}
-      ${kpiTile("Sem Estoque", rows.filter(r=>r["Situação"]==="Sem estoque").length, "bad")}
+      ${kpiTile("Abaixo do Mínimo", rows.filter(r=>r["Situação"]===SITUACAO_ESTOQUE.BAIXO).length, "warn")}
+      ${kpiTile("Sem Estoque", rows.filter(r=>r["Situação"]===SITUACAO_ESTOQUE.ZERO).length, "bad")}
     </div>
     <div class="card" style="padding:0;overflow:hidden">
-      <div class="scrollx">${tableHTML(rows, {"Situação": v=>pill(v, v==="Normal"?"good":v==="Abaixo do mínimo"?"warn":"bad")}, true)}</div>
+      <div class="scrollx">${tableHTML(rows, {"Situação": situacaoCellRenderer, "Ação": id=>`<button type="button" class="btn btn-ghost btn-sm" data-edit-estoque="${esc(id)}">✎ Mínimo/Segurança</button>`}, true)}</div>
     </div>
     ${lotesAlertaHTML()}
   </div>`;
@@ -2275,7 +2283,37 @@ function openModalAjuste(){
     }
   };
 }
-function openModalEditarEstoque(){ /* reserved */ }
+function openModalEditarEstoque(id){
+  const e = STATE.estoque.find(x=>x.id===id);
+  if(!e){ toast("Posição de estoque não encontrada.","error"); return; }
+  const m = materialByCode(e.material);
+  openModal(`
+    ${modalHeader("Editar Mínimo / Segurança — "+e.material)}
+    <div style="font-size:12.5px;color:var(--text-dim);margin-bottom:10px">${esc(m.nome)} · Obra ${e.obra} · Endereço atual: ${esc(e.endereco||"—")}</div>
+    <form id="form-limites-estoque" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label class="field-label">Estoque Mínimo</label><input type="number" min="0" step="0.01" name="minimo" value="${e.minimo||0}" required></div>
+      <div><label class="field-label">Estoque de Segurança</label><input type="number" min="0" step="0.01" name="seguranca" value="${e.seguranca||0}" required></div>
+      <div style="grid-column:span 2"><label class="field-label">Endereço / Local</label><input name="endereco" value="${esc(e.endereco||"")}" placeholder="Ex: RACK-E03"></div>
+      <div style="grid-column:span 2;font-size:11px;color:var(--text-faint)">A situação (Sem estoque / Abaixo do mínimo / De acordo) é recalculada automaticamente assim que você salvar.</div>
+      <div style="grid-column:span 2;display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div>
+    </form>
+  `);
+  wireModalClose();
+  const f = document.getElementById('form-limites-estoque');
+  f.onsubmit = async(ev)=>{
+    ev.preventDefault();
+    if(f.dataset.enviando==="1") return;
+    const __btn = f.querySelector('[type="submit"]');
+    f.dataset.enviando = "1"; if(__btn) __btn.disabled = true;
+    try{
+      const fd = new FormData(ev.target);
+      const ok = await dbMerge("estoque", id, {minimo: Number(fd.get('minimo'))||0, seguranca: Number(fd.get('seguranca'))||0, endereco: fd.get('endereco')||""});
+      if(ok){ toast("Mínimo/Segurança atualizados.","success"); closeModal(); }
+    } finally {
+      f.dataset.enviando = ""; if(__btn) __btn.disabled = false;
+    }
+  };
+}
 
 function openModalRM(numero){
   const rm = numero ? STATE.requisicoes.find(r=>r.numero===numero) : null;
@@ -2344,7 +2382,7 @@ function wireItemRemovers(){
   document.querySelectorAll('[data-remove-item]').forEach(el=>el.onclick=()=>{ const rows=document.querySelectorAll('[data-item-row]'); if(rows.length>1) el.closest('[data-item-row]').remove(); });
 }
 function openModalRMUrgente(){
-  const crit = criticosRows({mat:()=>true}).filter(r=>r["Situação"]!=="Controlado");
+  const crit = criticosRows({mat:()=>true}).filter(r=>r["Situação"]!==SITUACAO_ESTOQUE.OK);
   const byObra = groupBy(crit, r=>r.Obra);
   const obra = Object.keys(byObra)[0] || obrasAtivas()[0].codigo;
   const itens = (byObra[obra]||[]).map(r=>({material:r.Material, qtd: r["Reposição Sug."]||10}));
