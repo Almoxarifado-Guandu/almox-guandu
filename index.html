@@ -1381,6 +1381,7 @@ function viewRetiradaKiosk(){
         <div><label class="field-label">Lote / etiqueta (opcional)</label><input name="lote"></div>
         <div><label class="field-label">Aplicação / Onde foi usado</label><input name="aplicacao" placeholder="Ex: Filtro 3 — ETA"></div>
         <input type="hidden" name="programacaoId">
+        <input type="hidden" name="rm">
         <button type="submit" class="btn btn-primary" style="justify-content:center;padding:12px">Confirmar</button>
       </form>
     </div>
@@ -1411,6 +1412,7 @@ function wireRetiradaKiosk(){
       const ok = await registrarMovimentacao({
         obra: fd.get('obra'), material: fd.get('material'), tipo: fd.get('tipo'), quantidade: fd.get('quantidade'),
         lote: fd.get('lote'), aplicacao: fd.get('aplicacao'), responsavel: PROFILE.nome||"Campo", origemOverride:"campo",
+        rm: fd.get('rm')||null,
       });
       if(ok){
         f.reset();
@@ -1434,6 +1436,7 @@ function wireRetiradaKiosk(){
     f.querySelector('[name="quantidade"]').value = p.quantidadePrevista||"";
     f.querySelector('[name="aplicacao"]').value = p.observacao||"";
     f.querySelector('[name="programacaoId"]').value = p._id;
+    f.querySelector('[name="rm"]').value = p.rm||"";
     f.scrollIntoView({behavior:"smooth", block:"start"});
     toast("Formulário preenchido — confira e confirme.","info");
   });
@@ -1645,16 +1648,37 @@ function wireProgramacaoAdmin(){
     const p = (STATE.programacao||[]).find(x=>x._id===el.dataset.editProgramacao); if(p) openModalProgramacao(p);
   });
 }
+function programacaoMaterialOptionsHTML(rm, existing){
+  if(!rm) return STATE.materiais.map(m=>`<option value="${m.codigo}" ${existing&&existing.material===m.codigo?'selected':''}>${m.codigo} — ${esc(m.nome)}</option>`).join("");
+  const pendentes = (rm.itens||[]).filter(i=>(i.atendido||0) < i.qtd);
+  let itens = pendentes;
+  // Garante que o material já salvo apareça na lista mesmo se, por algum motivo, já não estiver mais pendente.
+  if(existing && existing.material && !itens.some(i=>i.material===existing.material)){
+    const item = (rm.itens||[]).find(i=>i.material===existing.material);
+    if(item) itens = [...itens, item];
+  }
+  if(!itens.length) return `<option value="">Nenhum item pendente nesta RM</option>`;
+  return itens.map(i=>`<option value="${i.material}" ${existing&&existing.material===i.material?'selected':''}>${i.material} — ${esc(materialByCode(i.material).nome)} (faltam ${fmtNum(i.qtd-(i.atendido||0))})</option>`).join("");
+}
 function openModalProgramacao(existing){
+  const pendingRMs = STATE.requisicoes.filter(r=>!["atendida","cancelada"].includes(r.status));
+  const rmInicial = existing&&existing.rm ? pendingRMs.find(r=>r.numero===existing.rm) : null;
   openModal(`
     ${modalHeader(existing? "Editar Atividade Programada" : "Nova Atividade Programada")}
     <form id="form-programacao" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div><label class="field-label">Obra</label><select name="obra">${obrasAtivas().map(o=>`<option value="${o.codigo}" ${existing&&existing.obra===o.codigo?'selected':''}>${o.codigo} — ${esc(o.nome)}</option>`).join("")}</select></div>
+      <div><label class="field-label">Obra</label><select name="obra" id="prog-obra-select" ${rmInicial?'disabled':''}>${obrasAtivas().map(o=>`<option value="${o.codigo}" ${existing&&existing.obra===o.codigo?'selected':''}>${o.codigo} — ${esc(o.nome)}</option>`).join("")}</select></div>
       <div><label class="field-label">Data</label><input type="date" name="data" value="${existing?existing.data:todayISO()}" required></div>
-      <div style="grid-column:span 2"><label class="field-label">Material</label>
-        <select name="material" required><option value="">Selecione…</option>${STATE.materiais.map(m=>`<option value="${m.codigo}" ${existing&&existing.material===m.codigo?'selected':''}>${m.codigo} — ${esc(m.nome)}</option>`).join("")}</select>
+      <div style="grid-column:span 2"><label class="field-label">Vincular à Requisição (RM) em aberto — opcional</label>
+        <select name="rm" id="prog-rm-select">
+          <option value="">Nenhuma — atividade avulsa</option>
+          ${pendingRMs.map(r=>`<option value="${r.numero}" ${existing&&existing.rm===r.numero?'selected':''}>${r.numero} — ${esc(r.aplicacao||'')} (${r.obra})</option>`).join("")}
+        </select>
+        <div style="font-size:11px;color:var(--text-faint);margin-top:3px">Ao escolher uma RM, a retirada feita a partir desta atividade atualiza o atendimento dela automaticamente.</div>
       </div>
-      <div><label class="field-label">Quantidade prevista</label><input type="number" min="0.01" step="0.01" name="quantidadePrevista" value="${existing?existing.quantidadePrevista:''}" required></div>
+      <div style="grid-column:span 2"><label class="field-label">Material</label>
+        <select name="material" id="prog-material-select" required><option value="">Selecione…</option>${programacaoMaterialOptionsHTML(rmInicial, existing)}</select>
+      </div>
+      <div><label class="field-label">Quantidade prevista</label><input type="number" min="0.01" step="0.01" name="quantidadePrevista" id="prog-qtd-input" value="${existing?existing.quantidadePrevista:''}" required></div>
       <div><label class="field-label">Responsável / Equipe</label><input name="responsavel" value="${existing?esc(existing.responsavel||''):''}" placeholder="Ex: Equipe Munck"></div>
       <div style="grid-column:span 2"><label class="field-label">Observação (opcional)</label><input name="observacao" value="${existing?esc(existing.observacao||''):''}" placeholder="Ex: Carregar antes das 10h"></div>
       ${existing? `<div style="grid-column:span 2"><label style="display:flex;align-items:center;gap:6px;font-size:12.5px"><input type="checkbox" name="concluido" ${existing.concluido?'checked':''} style="width:auto"> Marcar como concluída</label></div>` : ""}
@@ -1662,6 +1686,23 @@ function openModalProgramacao(existing){
     </form>
   `);
   wireModalClose();
+  const rmSelect = document.getElementById('prog-rm-select');
+  const obraSelect = document.getElementById('prog-obra-select');
+  const matSelect = document.getElementById('prog-material-select');
+  const qtdInput = document.getElementById('prog-qtd-input');
+  rmSelect.onchange = ()=>{
+    const rm = pendingRMs.find(r=>r.numero===rmSelect.value) || null;
+    if(rm){ obraSelect.value = rm.obra; obraSelect.disabled = true; }
+    else { obraSelect.disabled = false; }
+    matSelect.innerHTML = `<option value="">Selecione…</option>${programacaoMaterialOptionsHTML(rm, null)}`;
+    if(rm){
+      const primeiroPendente = (rm.itens||[]).find(i=>(i.atendido||0) < i.qtd);
+      if(primeiroPendente){
+        matSelect.value = primeiroPendente.material;
+        qtdInput.value = primeiroPendente.qtd - (primeiroPendente.atendido||0);
+      }
+    }
+  };
   const fProg = document.getElementById('form-programacao');
   fProg.onsubmit = async(e)=>{
     e.preventDefault();
@@ -1675,6 +1716,7 @@ function openModalProgramacao(existing){
         obra: fd.get('obra'), data: fd.get('data'), material: fd.get('material'),
         quantidadePrevista: Number(fd.get('quantidadePrevista'))||0,
         responsavel: fd.get('responsavel')||"", observacao: fd.get('observacao')||"",
+        rm: fd.get('rm')||null,
         concluido: existing? fd.get('concluido')==="on" : false,
       });
       if(ok){ toast(existing?"Atividade atualizada.":"Atividade programada criada.","success"); closeModal(); }
@@ -2144,6 +2186,10 @@ function openModalMovimentacao(){
       <div><label class="field-label">Validade (se entrada)</label><input type="date" name="validade"></div>
       <div><label class="field-label">Responsável</label><input name="responsavel"></div>
       <div><label class="field-label">Aplicação</label><input name="aplicacao"></div>
+      <div style="grid-column:span 2"><label class="field-label">RM vinculada (opcional)</label><input name="rm" placeholder="Ex: RM-1306-0445" list="rm-lista-abertas">
+        <datalist id="rm-lista-abertas">${STATE.requisicoes.filter(r=>!["atendida","cancelada"].includes(r.status)).map(r=>`<option value="${r.numero}">`).join("")}</datalist>
+        <div style="font-size:11px;color:var(--text-faint);margin-top:3px">Se preenchido e o material bater com um item pendente dessa RM, o atendimento dela é atualizado sozinho.</div>
+      </div>
       <div style="grid-column:span 2"><label class="field-label">Observação</label><textarea name="observacao" rows="2"></textarea></div>
       <div style="grid-column:span 2;display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button type="button" class="btn btn-ghost" data-close-modal>Cancelar</button><button type="submit" class="btn btn-primary">Salvar</button></div>
     </form>
