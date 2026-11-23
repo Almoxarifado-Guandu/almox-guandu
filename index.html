@@ -636,7 +636,8 @@ async function dbDelete(col,id){
 }
 
 async function registrarMovimentacao({obra,material,tipo,quantidade,lote,validade,responsavel,aplicacao,rm,observacao,origemOverride,fotoAssetId}){
-  if(!CAN_EDIT){ toast("Você não tem permissão para registrar movimentações aqui.","error"); return false; }
+  // Retirada/entrada é a função principal do papel "campo" — não bloquear por CAN_EDIT aqui.
+  // Quem pode editar cadastros, requisições, pedidos etc. continua controlado por CAN_EDIT nos respectivos formulários.
   quantidade = Math.abs(Number(quantidade)||0);
   if(quantidade<=0){ toast("Informe uma quantidade válida.","error"); return false; }
   let est = estoqueOf(obra,material);
