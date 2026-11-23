@@ -414,13 +414,25 @@ function normalizeDocs(snap){
     return {_id: d.id, _v: d.version!==undefined? d.version : d.updatedAt, ...data};
   });
 }
+// Realtime dispara um evento por tabela/mudança — com todas as 10 tabelas assinadas,
+// várias podem chegar quase juntas (ex.: login inicial, ou duas gravações seguidas).
+// Sem agrupar, cada uma reconstrói a tela inteira (render() recria todo o DOM), o que
+// pode "engolir" um clique em andamento (ex.: o botão de salvar de um formulário) se
+// o clique cair bem no meio de uma reconstrução. scheduleRender() agrupa rajadas de
+// eventos num único render por quadro de tela, sem atrasar a atualização de forma perceptível.
+let _renderScheduled = false;
+function scheduleRender(){
+  if(_renderScheduled) return;
+  _renderScheduled = true;
+  requestAnimationFrame(()=>{ _renderScheduled = false; render(); });
+}
 function subscribe(col, target){
   if(!DBC){ return; }
   try{
     const unsub = DBC.collection(col).onSnapshot((snap)=>{
       STATE[target] = normalizeDocs(snap);
       STATE.loaded[target]=true;
-      render();
+      scheduleRender();
     });
     UNSUBS.push(unsub);
   }catch(e){ console.error("subscribe failed",col,e); STATE.loaded[target]=true; }
