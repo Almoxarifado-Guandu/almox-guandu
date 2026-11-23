@@ -1369,7 +1369,6 @@ function viewRetiradaKiosk(){
             </div>
             <div style="display:flex;flex-direction:column;gap:4px">
               <button class="btn btn-primary btn-sm" data-usar-programacao="${p._id}">Retirar agora</button>
-              <button class="btn btn-ghost btn-sm" data-concluir-programacao="${p._id}">✓ Concluir</button>
             </div>
           </div>`).join("")}
       </div>
@@ -1447,19 +1446,6 @@ function wireRetiradaKiosk(){
     f.querySelector('[name="rm"]').value = p.rm||"";
     f.scrollIntoView({behavior:"smooth", block:"start"});
     toast("Formulário preenchido — confira e confirme.","info");
-  });
-  document.querySelectorAll('[data-concluir-programacao]').forEach(el=>el.onclick=async()=>{
-    el.disabled = true; el.textContent = "Salvando…";
-    const id = el.dataset.concluirProgramacao;
-    const ok = await dbMerge("programacao", id, {concluido:true, concluidoEm:new Date().toISOString()});
-    if(ok){
-      toast("Atividade marcada como concluída.","success");
-      // Atualização otimista: some da lista já, sem esperar o tempo real do servidor confirmar.
-      const idx = (STATE.programacao||[]).findIndex(p=>p._id===id);
-      if(idx>-1){ STATE.programacao[idx] = {...STATE.programacao[idx], concluido:true}; render(); }
-    } else {
-      el.disabled = false; el.textContent = "✓ Concluir";
-    }
   });
 }
 
