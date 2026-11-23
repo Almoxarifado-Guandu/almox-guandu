@@ -4,6 +4,16 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Almoxarifado Guandu — Obras 1306 &amp; 1344</title>
+<script>
+  // Aplica o tema salvo (se o usuário já escolheu manualmente) antes da página pintar,
+  // pra não dar o "flash" de claro->escuro. Se nunca escolheu, segue o sistema operacional normalmente.
+  (function(){
+    try{
+      var t = localStorage.getItem('tema');
+      if(t==='light' || t==='dark') document.documentElement.setAttribute('data-theme', t);
+    }catch(e){}
+  })();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 <script src="https://cdn.tailwindcss.com/3.4.17"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -911,6 +921,24 @@ function renderLogin(){
   };
 }
 
+/* ---------- Tema claro/escuro (alternância manual, além do padrão do sistema) ---------- */
+function temaAtual(){
+  const attr = document.documentElement.getAttribute('data-theme');
+  if(attr==='dark' || attr==='light') return attr;
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+}
+function aplicarTema(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  try{ localStorage.setItem('tema', theme); }catch(e){}
+}
+function alternarTema(){
+  const prox = temaAtual()==='dark' ? 'light' : 'dark';
+  aplicarTema(prox);
+  document.querySelectorAll('[data-theme-toggle]').forEach(btn=>{ btn.textContent = prox==='dark' ? '☀️ Claro' : '🌙 Escuro'; });
+}
+function temaToggleBtnHTML(){
+  return `<button type="button" class="btn btn-sm" style="background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3)" data-theme-toggle title="Alternar entre modo claro e escuro">${temaAtual()==='dark'?'☀️ Claro':'🌙 Escuro'}</button>`;
+}
 function kioskHeaderHTML(){
   return `
   <div class="nameplate" style="position:sticky;top:0;z-index:20">
@@ -921,12 +949,14 @@ function kioskHeaderHTML(){
         <div style="font-size:11px;color:rgba(255,255,255,.65)">${esc(PROFILE.nome||"(sem nome)")}</div>
         ${PERFIL_ERRO? `<div style="font-size:10.5px;color:#ffd9c7;margin-top:2px">⚠ ${esc(PERFIL_ERRO)} · uid ${esc((SESSION&&SESSION.user&&SESSION.user.id)||"?")}</div>` : ""}
       </div>
+      ${temaToggleBtnHTML()}
       <button class="btn btn-sm" style="background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3)" id="btn-logout">Sair</button>
       ${PERFIL_ERRO? `<button class="btn btn-sm" style="background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3)" id="btn-force-reset" title="Limpa qualquer sessão/cache travado e recarrega">Limpar sessão</button>` : ""}
     </div>
   </div>`;
 }
 function wireAuthHeaderCommon(){
+  document.querySelectorAll('[data-theme-toggle]').forEach(btn=>btn.onclick = alternarTema);
   const b = document.getElementById('btn-logout'); if(b) b.onclick = ()=> sb.auth.signOut();
   const r = document.getElementById('btn-force-reset');
   if(r) r.onclick = async ()=>{
@@ -987,6 +1017,7 @@ function headerHTML(){
           <div style="font-size:12px;font-weight:700;color:#fff">${esc(PROFILE?PROFILE.nome||"":"")}</div>
           <div style="font-size:10px;color:rgba(255,255,255,.6);letter-spacing:.04em">${PROFILE?PROFILE.role:""}</div>
         </div>
+        ${temaToggleBtnHTML()}
         <button class="btn btn-sm" style="background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.3)" id="btn-logout">Sair</button>
       </div>
     </div>
