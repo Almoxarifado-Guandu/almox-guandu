@@ -363,8 +363,19 @@ const SITUACAO_ESTOQUE = { ZERO:"🔴 Sem estoque", BAIXO:"🟠 Abaixo do mínim
 const SITUACAO_COR = { [SITUACAO_ESTOQUE.ZERO]:"bad", [SITUACAO_ESTOQUE.BAIXO]:"warn", [SITUACAO_ESTOQUE.OK]:"good" };
 function calcDisponivel(e){ return (e&&e.saldoAtual||0) - (e&&e.reservado||0); }
 function calcSituacaoEstoque(disponivel, minimo){
-  if(disponivel<=0) return SITUACAO_ESTOQUE.ZERO;
-  if(disponivel<(minimo||0)) return SITUACAO_ESTOQUE.BAIXO;
+  const saldo = Number(disponivel) || 0;
+
+  // Estoque zerado ou negativo
+  if (saldo <= 0) return SITUACAO_ESTOQUE.ZERO;
+
+  // Verifica se existe mínimo cadastrado e ativo (nulo/vazio/0/negativo = "sem mínimo configurado")
+  const minimoInformado = minimo !== null && minimo !== undefined && String(minimo).trim() !== "";
+  const limite = minimoInformado ? Number(minimo) : null;
+
+  if (!minimoInformado || !Number.isFinite(limite) || limite <= 0) return SITUACAO_ESTOQUE.OK;
+
+  if (saldo < limite) return SITUACAO_ESTOQUE.BAIXO;
+
   return SITUACAO_ESTOQUE.OK;
 }
 function situacaoCellRenderer(v){ return pill(v, SITUACAO_COR[v]||"info"); }
