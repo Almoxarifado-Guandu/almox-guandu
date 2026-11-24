@@ -178,6 +178,7 @@ let AUTH_READY=false, SESSION=null, PROFILE=null;
 const COL_PK = {
   obras:"codigo", fornecedores:"codigo", materiais:"codigo", estoque:"id", lotes:"id",
   requisicoes:"numero", pedidos:"numero", movimentacoes:"id", agendamentos:"id", programacao:"id",
+  locais:"id",
 };
 function toSnakeKey(k){ return k.replace(/([A-Z])/g,(m,c)=>"_"+c.toLowerCase()); }
 function toCamelKey(k){ return k.replace(/_([a-z0-9])/g,(m,c)=>c.toUpperCase()); }
@@ -396,8 +397,8 @@ function responsavelDatalistHTML(id){ return nomesDatalistHTML(id, RESPONSAVEIS_
    STATE  (local mirror of the shared database)
    ============================================================ */
 const STATE = {
-  obras:[], fornecedores:[], materiais:[], estoque:[], requisicoes:[], movimentacoes:[], pedidos:[], agendamentos:[], lotes:[], programacao:[],
-  loaded:{obras:false,fornecedores:false,materiais:false,estoque:false,requisicoes:false,movimentacoes:false,pedidos:false,agendamentos:false,lotes:false,programacao:false},
+  obras:[], fornecedores:[], materiais:[], estoque:[], requisicoes:[], movimentacoes:[], pedidos:[], agendamentos:[], lotes:[], programacao:[], locais:[],
+  loaded:{obras:false,fornecedores:false,materiais:false,estoque:false,requisicoes:false,movimentacoes:false,pedidos:false,agendamentos:false,lotes:false,programacao:false,locais:false},
 };
 const VFILTER = { obra:"1306" }; // vigente obra filter used across app — abre em 1306 por padrão; "todas" fica disponível na aba "Ambas"
 let ROUTE = {tab:"painel", sub:null};
@@ -454,6 +455,7 @@ async function startSubscriptions(){
   subscribe("agendamentos","agendamentos");
   subscribe("lotes","lotes");
   subscribe("programacao","programacao");
+  subscribe("locais","locais");
   setTimeout(()=>{ // failsafe: stop showing skeleton after 10s even if a collection is empty/unavailable
     Object.keys(STATE.loaded).forEach(k=>{ if(!STATE.loaded[k]) STATE.loaded[k]=true; });
     render();
@@ -585,6 +587,29 @@ function materialByCode(c){ return STATE.materiais.find(m=>m.codigo===c) || {cod
 function obraByCode(c){ return STATE.obras.find(o=>o.codigo===c) || {codigo:c, nome:c}; }
 function fornecedorByCode(c){ return STATE.fornecedores.find(f=>f.codigo===c) || {codigo:c, nome:c}; }
 function estoqueOf(obra,material){ return STATE.estoque.find(e=>e.obra===obra && e.material===material); }
+function locaisOf(obra){
+  return STATE.locais.filter(l=>l.obra===obra && l.ativo!==false).concat().sort((a,b)=> a.nome.localeCompare(b.nome,'pt',{numeric:true}));
+}
+// Monta o <select> do campo Aplicação (lista fixa de locais daquela obra). Se o valor atual
+// (currentVal, usado ao editar um registro já existente) não bater com nenhum local cadastrado
+// — por ser um texto livre de antes desta lista existir, por exemplo — ele aparece como uma
+// opção extra no topo, pra não "sumir" o dado antigo silenciosamente.
+function aplicacaoOptionsHTML(obra, currentVal){
+  const locs = locaisOf(obra);
+  const temAtual = currentVal && !locs.some(l=>l.nome===currentVal);
+  return `<option value="">Selecione...</option>
+    ${temAtual? `<option value="${esc(currentVal)}" selected>${esc(currentVal)} (valor antigo)</option>`:""}
+    ${locs.map(l=>`<option value="${esc(l.nome)}" ${l.nome===currentVal?'selected':''}>${esc(l.nome)}</option>`).join("")}`;
+}
+function aplicacaoSelectHTML(obra, currentVal, name="aplicacao", required=false, id=""){
+  return `<select name="${name}" ${id?`id="${id}"`:""} ${required?'required':''}>${aplicacaoOptionsHTML(obra, currentVal)}</select>`;
+}
+// Liga um <select name="obra"> a um <select> de Aplicação na mesma linha/formulário, repovoando
+// as opções de local sempre que a obra escolhida mudar (os locais são fixos por obra).
+function wireObraAplicacaoLink(obraSelEl, aplicacaoSelEl){
+  if(!obraSelEl || !aplicacaoSelEl) return;
+  obraSelEl.addEventListener('change', ()=>{ aplicacaoSelEl.innerHTML = aplicacaoOptionsHTML(obraSelEl.value, ""); });
+}
 function obrasAtivas(){
   const list = STATE.obras.length? STATE.obras : [{codigo:"1306",nome:"Consórcio Guandu Filtros"},{codigo:"1344",nome:"Consórcio Translodo"}];
   return list.concat().sort((a,b)=> String(a.codigo).localeCompare(String(b.codigo),'pt',{numeric:true}));
