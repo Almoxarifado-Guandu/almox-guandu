@@ -216,7 +216,8 @@ function makeCollection(col){
     onSnapshot(cb){
       let channel=null, alive=true;
       async function load(){
-        const { data, error } = await sb.from(col).select("*").limit(5000);
+        const pk = COL_PK[col];
+        const { data, error } = await sb.from(col).select("*").order(pk, { ascending: true }).limit(5000);
         if(!alive) return;
         if(error){ console.error("load failed",col,error); cb([]); return; }
         cb((data||[]).map(r=>({ id:r[COL_PK[col]], data:()=>rowToCamel(r) })));
