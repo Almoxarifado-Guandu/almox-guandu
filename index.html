@@ -856,7 +856,7 @@ function consumoAgregado(f){
   return Object.entries(byMat).map(([mat,list])=>({"Material":mat,"Nome":materialByCode(mat).nome,"Categoria":materialByCode(mat).categoria,"Qtd Consumida":sum(list,x=>x.quantidade),"UN":materialByCode(mat).unidade}));
 }
 function criticosRows(f){
-  return estoqueVisivel().filter(e=>materialByCode(e.material).critico && f.mat(e)).map(e=>{
+  return estoqueVisivel().filter(e=>materialByCode(e.material).critico && f.mat(e)).slice().sort((a,b)=>materialByCode(a.material).nome.localeCompare(materialByCode(b.material).nome,"pt-BR")).map(e=>{
     const movs = movimentacoesVisiveis().filter(m=>m.material===e.material && m.tipo==="saida");
     const months = new Set(movs.map(m=>ymOf(m.data)));
     const consumoMedioMes = months.size? sum(movs,m=>m.quantidade)/months.size : 0;
